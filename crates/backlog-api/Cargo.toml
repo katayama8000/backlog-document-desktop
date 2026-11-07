@@ -1,0 +1,13 @@
+[package]
+name = "backlog-api"
+description = "Minimal Backlog API client for documents"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query", "form"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ts-rs.workspace = true
+url = "2"

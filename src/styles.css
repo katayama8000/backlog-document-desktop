@@ -1,0 +1,120 @@
+:root {
+  --bg: #ffffff;
+  --bg-sub: #f6f7f9;
+  --fg: #1f2328;
+  --muted: #6b6f76;
+  --border: #e3e5e8;
+  --accent: #2563eb;
+  --error: #d1242f;
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --del-bg: #ffebe9;
+  --add-bg: #dafbe1;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1f22;
+    --bg-sub: #26272b;
+    --fg: #e6e6e6;
+    --muted: #9a9ca3;
+    --border: #3a3c42;
+    --accent: #6ea8fe;
+    --error: #ff7b72;
+    --ok: #56d364;
+    --warn: #e3b341;
+    --del-bg: #4a1f1f;
+    --add-bg: #1f3a25;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+
+button, input, select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+button { cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link { border: none; background: none; color: var(--accent); padding: 0; }
+
+.center { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 16px; }
+.content .center { height: 100%; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.error { color: var(--error); }
+.row { display: flex; gap: 8px; align-items: center; }
+.badge {
+  display: inline-block;
+  margin: 0 0 0 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sub);
+  border: 1px solid var(--border);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* Settings */
+.settings { display: flex; flex-direction: column; gap: 14px; width: 420px; }
+.settings label { display: flex; flex-direction: column; gap: 6px; }
+.settings .row { justify-content: flex-end; }
+
+/* Layout */
+.layout { display: flex; height: 100vh; }
+.sidebar {
+  width: 300px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sub);
+  overflow: hidden;
+}
+.sidebar .badge { margin: 0; }
+.sidebar select { flex: 1; min-width: 0; }
+.sidebar-header { display: flex; justify-content: space-between; align-items: center; }
+.space { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.content { flex: 1; overflow-y: auto; }
+
+/* Tree */
+.tree { overflow-y: auto; flex: 1; }
+.tree-item { display: flex; align-items: center; border-radius: 6px; }
+.tree-item.selected { background: var(--border); }
+.tree-item button { border: none; background: none; padding: 4px; text-align: left; }
+.tree-item .toggle { width: 20px; color: var(--muted); flex: none; }
+.tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-children { padding-left: 14px; }
+
+/* Document */
+.document { max-width: 860px; margin: 0 auto; padding: 24px 32px 64px; }
+.document-header { border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.editor .tiptap { outline: none; line-height: 1.7; }
+.editor .tiptap pre { background: var(--bg-sub); padding: 12px; border-radius: 6px; overflow-x: auto; }
+.editor .tiptap code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.editor .tiptap table { border-collapse: collapse; margin: 12px 0; }
+.editor .tiptap th, .editor .tiptap td { border: 1px solid var(--border); padding: 4px 8px; }
+.editor .tiptap blockquote { border-left: 3px solid var(--border); margin: 0; padding-left: 12px; color: var(--muted); }
+
+/* Round-trip report */
+.roundtrip { margin-top: 32px; border-top: 1px dashed var(--border); padding-top: 12px; font-size: 12px; }
+.roundtrip summary { cursor: pointer; color: var(--muted); }
+.roundtrip .ok { color: var(--ok); }
+.roundtrip .warn { color: var(--warn); }
+.diff { font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; margin-top: 8px; }
+.diff .del { background: var(--del-bg); }
+.diff .add { background: var(--add-bg); }
+.diff .same { color: var(--muted); }
