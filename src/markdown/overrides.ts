@@ -7,6 +7,7 @@ import HardBreak from "@tiptap/extension-hard-break";
 import Link from "@tiptap/extension-link";
 import Paragraph from "@tiptap/extension-paragraph";
 import { Table } from "@tiptap/extension-table";
+import { MarkdownManager } from "@tiptap/markdown";
 
 // ── Text at line edges ──────────────────────────────────────────────
 
@@ -136,6 +137,15 @@ export const HtmlBreakLine = Extension.create({
 });
 
 // ── Links ───────────────────────────────────────────────────────────
+
+/**
+ * Backlog writes every link as `[text](url)`, so a bare `https://…`, `www.…`
+ * or `a@b.co` is text. This turns off marked's GFM `url` tokenizer, which
+ * would link them, on the shared marked instance that every MarkdownManager
+ * parses with. `<https://…>` uses the separate `autolink` tokenizer.
+ * Returning `false` instead would fall back to marked's own tokenizer.
+ */
+new MarkdownManager().instance.use({ tokenizer: { url: () => undefined } });
 
 /** Returns the index just after the `]` closing `src[0] === "["`, or -1. */
 function closingBracket(src: string): number {
