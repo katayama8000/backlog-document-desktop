@@ -24,14 +24,29 @@ export function parsePandocAttributes(src: string): {
     classes: [],
     values: {},
   };
-  const re = /([\w-]+)=(?:"((?:[^"\\]|\\.)*)"|(\S+))|#([^\s}]+)|\.([^\s}]+)/g;
+  const re =
+    /([\w-]+)=(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^\s"'\]}]*))|#([^\s\]}]+)|\.([^\s\]}]+)/g;
   for (const m of src.matchAll(re)) {
-    if (m[1]) out.values[m[1]] = m[2] !== undefined ? m[2].replace(/\\(.)/g, "$1") : m[3];
-    else if (m[4]) out.id = m[4];
-    else if (m[5]) out.classes.push(m[5]);
+    if (m[1]) out.values[m[1]] = unescapeAttrValue(m[2] ?? m[3] ?? m[4] ?? "");
+    else if (m[5]) out.id = m[5];
+    else if (m[6]) out.classes.push(m[6]);
   }
   return out;
 }
+
+/** Backlog escapes `\ " newline` with backslashes and `{ }` as `%7B` / `%7D`. */
+function unescapeAttrValue(value: string): string {
+  return value
+    .replace(/%7B/g, "{")
+    .replace(/%7D/g, "}")
+    .replace(/\\(.)/g, (_, c: string) => (c === "n" ? "\n" : c));
+}
+
+/** One shortcode attribute: `#id`, `.class`, `key="…"`, `key='…'` or `key=bare`. */
+const SHORTCODE_ATTR = String.raw`(?:[#.][\w-]+|[\w-]+=(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[^\s"'\]]*))`;
+const SHORTCODE = new RegExp(
+  String.raw`^\[[A-Za-z][\w-]*(?:[ \t]+${SHORTCODE_ATTR})+[ \t]*\](?![({])`,
+);
 
 /** Only pass through values that look like a CSS color, never arbitrary CSS. */
 function safeColor(value: string | undefined): string | undefined {
@@ -103,6 +118,17 @@ export const HeadingAttributes = Node.create({
   renderMarkdown: (node) => node.attrs?.raw ?? "",
 });
 
+/** Native emoji character from `[emoji id="{\"c\":\"🍒\",…}"]`, if any. */
+function emojiChar(shortId: string | undefined, json: string | undefined): string | undefined {
+  if (shortId || !json) return undefined;
+  try {
+    const parsed = JSON.parse(json);
+    return typeof parsed?.c === "string" ? parsed.c : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Backlog inline elements such as
  * `[dateMention label="2026/08/14" date="2026-08-14T00:00:00+09:00" mentionType="inline"]`.
@@ -130,8 +156,8 @@ export const BacklogInline = Node.create({
   renderHTML({ node }) {
     const raw: string = node.attrs.raw;
     const name = /^\[([\w-]+)/.exec(raw)?.[1] ?? "";
-    const { values } = parsePandocAttributes(raw.slice(name.length + 1, -1));
-    const label = values.label || values.name || name;
+    const { id, values } = parsePandocAttributes(raw.slice(name.length + 1, -1));
+    const label = (name === "emoji" && emojiChar(id, values.id)) || values.label || values.name || name;
     return [
       "span",
       {
@@ -146,9 +172,9 @@ export const BacklogInline = Node.create({
   markdownTokenizer: {
     name: "backlogInline",
     level: "inline",
-    start: (src) => src.search(/\[[A-Za-z][\w-]*[ \t]+[\w-]+="/),
+    start: (src) => src.search(/\[[A-Za-z][\w-]*[ \t]+(?:[#.][\w-]|[\w-]+=)/),
     tokenize: (src) => {
-      const m = /^\[[A-Za-z][\w-]*(?:[ \t]+[\w-]+="(?:[^"\\\n]|\\.)*")+[ \t]*\](?![[({:])/.exec(src);
+      const m = SHORTCODE.exec(src);
       if (m) return { type: "backlogInline", raw: m[0] };
     },
   },
@@ -225,6 +251,8 @@ export const PandocSpan = Mark.create({
 
 const FENCE_OPEN = /^(:{3,})[ \t]*([^\s:][^\n]*)$/;
 const FENCE_CLOSE = /^:{3,}[ \t]*$/;
+/** One-line block such as `:::youtube {src="…"} :::` (Backlog escapes `{ }` in values). */
+const FENCE_ATOM = /^ {0,3}:{3,}[ \t]*([\w-]+)(?:[ \t]+\{([^}\n]*)\})?[ \t]*:{3,}[ \t]*$/;
 
 /** Pandoc fenced div: `:::paragraph {}` … `:::`. Nested divs are supported. */
 export const FencedDiv = Node.create({
@@ -283,10 +311,11 @@ export const FencedDiv = Node.create({
     },
     tokenize: (src, tokens, lexer) => {
       const lines = src.split("\n");
-      if (!FENCE_OPEN.test(lines[0])) return;
+      if (FENCE_ATOM.test(lines[0]) || !FENCE_OPEN.test(lines[0])) return;
       let depth = 1;
       let end = 1;
       for (; end < lines.length; end++) {
+        if (FENCE_ATOM.test(lines[end])) continue;
         if (FENCE_OPEN.test(lines[end])) depth++;
         else if (FENCE_CLOSE.test(lines[end]) && --depth === 0) break;
       }
@@ -340,7 +369,66 @@ export const FencedDiv = Node.create({
   },
 });
 
-export const BacklogMarkdown = [HeadingAttributes, BacklogInline, PandocSpan, FencedDiv];
+/**
+ * One-line Backlog blocks: `:::youtube {src="…" width="640"} :::`, `:::video {…} :::`,
+ * `:::figma {…} :::`, `:::cacoo {…} :::`, `:::sharedFileVideo {#78 …} :::`.
+ * Shown as a placeholder card; serialized back as written.
+ */
+export const FencedAtom = Node.create({
+  name: "fencedAtom",
+  group: "block",
+  atom: true,
+
+  addAttributes() {
+    return { raw: { default: "", rendered: false } };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: "div[data-fenced-atom]",
+        getAttrs: (el) => ({ raw: el.getAttribute("data-fenced-atom") ?? "" }),
+      },
+    ];
+  },
+
+  renderHTML({ node }) {
+    const m = FENCE_ATOM.exec(node.attrs.raw);
+    const name = m?.[1] ?? "";
+    const { values } = parsePandocAttributes(m?.[2] ?? "");
+    const target = values.src || values.url || values.name || "";
+    return [
+      "div",
+      { "data-fenced-atom": node.attrs.raw, class: `embed-card embed-${name}` },
+      ["span", { class: "embed-kind" }, name],
+      ["span", { class: "embed-target" }, target],
+    ];
+  },
+
+  markdownTokenizer: {
+    name: "fencedAtom",
+    level: "block",
+    start: (src) => {
+      const m = /(^|\n) {0,3}:{3,}[ \t]*[\w-]+(?:[ \t]+\{[^}\n]*\})?[ \t]*:{3,}[ \t]*(?:\n|$)/.exec(src);
+      return m ? m.index + m[1].length : -1;
+    },
+    tokenize: (src) => {
+      const line = /^[^\n]*/.exec(src)![0];
+      if (!FENCE_ATOM.test(line)) return;
+      return {
+        type: "fencedAtom",
+        raw: src.length > line.length ? `${line}\n` : line,
+        line,
+      };
+    },
+  },
+
+  parseMarkdown: (token, h) => h.createNode("fencedAtom", { raw: token.line }),
+
+  renderMarkdown: (node) => node.attrs?.raw ?? "",
+});
+
+export const BacklogMarkdown = [HeadingAttributes, BacklogInline, PandocSpan, FencedDiv, FencedAtom];
 
 const PLACEHOLDER = "BACKLOGFENCEDDIVPLACEHOLDER";
 
