@@ -10,7 +10,7 @@ Releases start from the GitHub **Releases** page. Publishing a release runs `.gi
 4. Click **Publish release**.
 5. Wait for the **Build macOS app** run under the Actions tab. When it finishes, the `.dmg` appears under the release's **Assets**. The first build took about 7 minutes without a cache; later builds reuse the Rust cache.
 
-The app version comes from the tag (`v0.2.0` → `0.2.0`) at build time, so the version files don't need a commit first. The tag must look like `vMAJOR.MINOR.PATCH` (optionally with a suffix like `-beta.1`), or the build fails.
+The version comes from the tag (`v0.2.0` → `0.2.0`) at build time, for both the app and the Rust crates, so the version files don't need a commit first. The tag must be exactly `vMAJOR.MINOR.PATCH` (no suffix such as `-beta.1`, because macOS bundle versions are numbers only), or the build fails.
 
 The version in `src-tauri/tauri.conf.json`, `Cargo.toml` and `package.json` stays as the development version. Bump them now and then so local builds show a recent number.
 
@@ -22,7 +22,7 @@ Every push to `main` also builds the app. Download the `.dmg` from that run's **
 
 ## Unsigned builds
 
-The app is only ad-hoc signed (no Developer ID) and not notarized, so macOS blocks it on first launch after a download:
+The app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"`, no Developer ID) and not notarized, so macOS blocks it on first launch after a download:
 
 - **"can't verify the developer" / "could not verify":** try to open the app once, then go to System Settings → Privacy & Security and click **Open Anyway**. (On older macOS, right-click the app and choose **Open** also works.)
 - **"is damaged and can't be opened":** remove the download quarantine flag, then open it normally:
@@ -36,4 +36,4 @@ Signing needs an Apple Developer ID; the certificate and notarization credential
 ## If something goes wrong
 
 - **The build failed:** open the failed run under the Actions tab and click **Re-run jobs**. It builds the same tag again and uploads to the same release. If the code needs a fix, delete the release and its tag (Releases → the release → Delete, then Tags → the tag → Delete), fix `main`, and publish the release again.
-- **The release has no .dmg:** check that it was published (not saved as a draft) and that the tag starts with `v`.
+- **The release has no .dmg:** check that it was published (not saved as a draft), that the tag is exactly `vX.Y.Z`, and that both jobs of the run (`build`, then `attach-to-release`) succeeded.
