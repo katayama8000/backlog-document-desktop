@@ -1,6 +1,7 @@
 mod assets;
 mod commands;
 mod error;
+mod navigation;
 mod secrets;
 mod state;
 mod store;
@@ -12,8 +13,10 @@ use crate::store::Store;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(navigation::guard(context.config()))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -30,6 +33,6 @@ pub fn run() {
             commands::get_tree,
             commands::get_document,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
