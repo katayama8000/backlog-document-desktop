@@ -3,11 +3,13 @@
 import { run, type Case } from "./harness.ts";
 
 /**
- * True when `html` has a `<tag>` with every given attribute. `class` lists
- * tokens that must all be present; `null` means the attribute is absent.
+ * True when `html` has a `<tag>`, optionally followed right away by `inner`,
+ * with every given attribute. `class` lists tokens that must all be present;
+ * `null` means the attribute is absent.
  */
-function hasTag(html: string, tag: string, attrs: Record<string, string | null> = {}): boolean {
-  return [...html.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>`, "g"))].some(([t]) =>
+function hasTag(html: string, tag: string, attrs: Record<string, string | null> = {}, inner = ""): boolean {
+  const escaped = inner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...html.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>(?=${escaped})`, "g"))].some(([t]) =>
     Object.entries(attrs).every(([k, v]) => {
       const value = new RegExp(`\\s${k}="([^"]*)"`).exec(t)?.[1];
       if (v === null) return value === undefined;
@@ -54,6 +56,33 @@ const cases: Case[] = [
     src: ":::definitionList\n:::definitionTerm\nTerm\n:::\n\n:::definitionDescription\nMeaning\n:::\n:::",
     html: (h) =>
       hasTag(h, "dl") && /<dt[^>]*><p>Term<\/p><\/dt>/.test(h) && /<dd[^>]*><p>Meaning<\/p><\/dd>/.test(h),
+  },
+  {
+    name: "div-form table: real table with spans and widths",
+    src: [
+      ":::table",
+      ":::tableRow",
+      ':::tableHeader {colwidth="120"}\nName\n:::',
+      "",
+      ':::tableHeader {colspan="2" colwidth="80,100"}\nValue\n:::',
+      ":::",
+      "",
+      ":::tableRow",
+      ':::tableCell {rowspan="2"}\n- a\n- b\n:::',
+      "",
+      ':::tableCell {colwidth="0"}\nx\n:::',
+      "",
+      ':::tableCell {colspan="2 x" colwidth="9px; color:red"}\ny\n:::',
+      ":::",
+      ":::",
+    ].join("\n"),
+    html: (h) =>
+      /<div[^>]*div-table[^>]*><table><tbody><tr[^>]*><th[^>]*><p>Name<\/p><\/th>/.test(h) &&
+      hasTag(h, "th", { style: "width: 120px", colspan: null }, "<p>Name</p>") &&
+      hasTag(h, "th", { colspan: "2", style: "width: 180px" }, "<p>Value</p>") &&
+      hasTag(h, "td", { rowspan: "2" }, "<ul>") &&
+      hasTag(h, "td", { style: null }, "<p>x</p>") &&
+      hasTag(h, "td", { style: null, colspan: null }, "<p>y</p>"),
   },
   {
     name: "captured table: figure with caption",

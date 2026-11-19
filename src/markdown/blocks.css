@@ -46,6 +46,10 @@
 .editor .tiptap details.fenced-div > summary > p { display: inline; margin: 0; }
 .editor .tiptap details.fenced-div[open] > summary { margin-bottom: 6px; }
 
+/* Div-form tables scroll sideways instead of widening the page. */
+.editor .tiptap .div-table { overflow-x: auto; }
+.editor .tiptap .div-table th { background: var(--bg-sub); text-align: left; }
+
 /* Definition lists and captioned tables. */
 .editor .tiptap dt.fenced-div { font-weight: 600; margin-top: 8px; }
 .editor .tiptap dd.fenced-div { margin-left: 24px; }

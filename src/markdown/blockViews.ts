@@ -71,6 +71,10 @@ const DIV_VIEWS: Record<string, DivView> = {
   definitionList: () => ["dl", {}, 0],
   definitionTerm: () => ["dt", {}, 0],
   definitionDescription: () => ["dd", {}, 0],
+  table: () => ["div", { class: "div-table" }, ["table", {}, ["tbody", {}, 0]]],
+  tableRow: () => ["tr", {}, 0],
+  tableHeader: (head) => ["th", cellAttrs(head), 0],
+  tableCell: (head) => ["td", cellAttrs(head), 0],
   capturedTable: () => ["figure", {}, 0],
   figcaption: () => ["figcaption", {}, 0],
   blockComment: ({ values }) => ["div", { class: "block-comment", title: commentText(values.comment) }, 0],
@@ -81,6 +85,18 @@ const DIV_VIEWS: Record<string, DivView> = {
     ["div", {}, 0],
   ],
 };
+
+/** `colspan`, `rowspan` and `colwidth="120,80"` (px per spanned column) of a div-form cell. */
+function cellAttrs({ values }: BlockHead): Attrs {
+  const span = (v: string | undefined) => (v && /^[1-9]\d{0,3}$/.test(v) ? v : undefined);
+  const widths = /^\d+(,\d+)*$/.test(values.colwidth ?? "") ? values.colwidth.split(",").map(Number) : [];
+  const width = widths.every((w) => w > 0) ? widths.reduce((a, b) => a + b, 0) : 0;
+  return {
+    colspan: span(values.colspan),
+    rowspan: span(values.rowspan),
+    style: width ? `width: ${width}px` : undefined,
+  };
+}
 
 /**
  * Text for the tooltip of `blockComment {comment="…"}`. The value is JSON; show
