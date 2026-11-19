@@ -1,32 +1,20 @@
 # Releasing
 
-Releases are built by GitHub Actions (`.github/workflows/build-macos.yml`). Pushing a `v*` tag builds a universal macOS `.dmg` (Apple Silicon and Intel) and attaches it to a draft GitHub Release.
+Releases start from the GitHub **Releases** page. Publishing a release runs `.github/workflows/build-macos.yml`, which builds a universal macOS `.dmg` (Apple Silicon and Intel) and attaches it to that release.
 
 ## Steps
 
-1. **Pick the version.** Use semantic versioning, for example `0.2.0`.
+1. Open **Releases** → **Draft a new release**.
+2. **Choose a tag** → type a new tag such as `v0.2.0` → **Create new tag on publish**. Target: `main`.
+3. Click **Generate release notes**, and edit the title and notes if needed.
+4. Click **Publish release**.
+5. Wait for the **Build macOS app** run under the Actions tab. When it finishes, the `.dmg` appears under the release's **Assets**. The first build took about 7 minutes without a cache; later builds reuse the Rust cache.
 
-2. **Update the version in all three places** on a branch, and merge it into `main`:
+The app version comes from the tag (`v0.2.0` → `0.2.0`) at build time, so the version files don't need a commit first. The tag must look like `vMAJOR.MINOR.PATCH` (optionally with a suffix like `-beta.1`), or the build fails.
 
-   | File | Field |
-   | --- | --- |
-   | `src-tauri/tauri.conf.json` | `"version"` (the version the app shows) |
-   | `Cargo.toml` | `[workspace.package] version` (shared by every crate) |
-   | `package.json` | `"version"` |
+The version in `src-tauri/tauri.conf.json`, `Cargo.toml` and `package.json` stays as the development version. Bump them now and then so local builds show a recent number.
 
-   Run `cargo check --workspace` so `Cargo.lock` picks up the new version, and commit it too.
-
-3. **Tag `main` and push the tag:**
-
-   ```sh
-   git checkout main && git pull
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-
-4. **Wait for the build.** Open the **Build macOS app** run for the tag under the Actions tab and wait for it to finish. The first build took about 7 minutes without a cache; later builds reuse the Rust cache.
-
-5. **Publish the release.** The run creates a draft release named `Backlog Document Desktop v0.2.0` with the `.dmg` attached. Under Releases, open the draft, write the release notes (**Generate release notes** lists the merged PRs), and click **Publish release**.
+Saving a release as a **draft** does not start a build; only **Publish** does.
 
 ## Builds without a release
 
@@ -47,13 +35,5 @@ Signing needs an Apple Developer ID; the certificate and notarization credential
 
 ## If something goes wrong
 
-- **The build failed:** fix it on `main`, then delete the tag and push it again:
-
-  ```sh
-  git push origin :refs/tags/v0.2.0
-  git tag -f v0.2.0
-  git push origin v0.2.0
-  ```
-
-  Delete the old draft release first, so it doesn't collect duplicate assets.
-- **Wrong version shown in the app:** `src-tauri/tauri.conf.json` was not updated. Bump it and release a new patch version.
+- **The build failed:** open the failed run under the Actions tab and click **Re-run jobs**. It builds the same tag again and uploads to the same release. If the code needs a fix, delete the release and its tag (Releases → the release → Delete, then Tags → the tag → Delete), fix `main`, and publish the release again.
+- **The release has no .dmg:** check that it was published (not saved as a draft) and that the tag starts with `v`.
