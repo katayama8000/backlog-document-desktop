@@ -187,8 +187,9 @@ export const BacklogInline = Node.create({
 /** Pandoc bracketed span: `[text]{.textStyle color="" backgroundColor=""}`. */
 export const PandocSpan = Mark.create({
   name: "pandocSpan",
-  // Lower than the built-in marks so a span ends up outside bold/italic/etc.
-  priority: 50,
+  // Above bold/italic (100) so that, over the same text, the span is written
+  // outside them like Backlog does: `[**a**]{.textStyle}`. Links (1000) stay outermost.
+  priority: 101,
   inclusive: false,
 
   addAttributes() {
@@ -428,7 +429,121 @@ export const FencedAtom = Node.create({
   renderMarkdown: (node) => node.attrs?.raw ?? "",
 });
 
-export const BacklogMarkdown = [HeadingAttributes, BacklogInline, PandocSpan, FencedDiv, FencedAtom];
+/** Image with optional Pandoc attributes: `![alt](src "title"){width="846" height="318"}`. */
+const IMAGE =
+  /^!\[((?:\\.|[^\]\\])*)\]\(\s*(?:<([^>\n]*)>|([^\s)]*))(?:\s+(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'))?\s*\)(?:\{([^}\n]*)\})?/;
+
+/** Only http(s) and relative URLs are loaded; anything else shows the alt text. */
+function safeSrc(src: string): string | undefined {
+  return /^(https?:\/\/|\/(?!\/)|\.{0,2}\/|[\w%-]+(?:\/|\.\w+$))/i.test(src) ? src : undefined;
+}
+
+export const BacklogImage = Node.create({
+  name: "backlogImage",
+  group: "inline",
+  inline: true,
+  atom: true,
+
+  addAttributes() {
+    return { raw: { default: "", rendered: false } };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: "img[data-backlog-image]",
+        getAttrs: (el) => ({ raw: el.getAttribute("data-backlog-image") ?? "" }),
+      },
+    ];
+  },
+
+  renderHTML({ node }) {
+    const m = IMAGE.exec(node.attrs.raw);
+    const unescape = (v: string | undefined) => v?.replace(/\\(.)/g, "$1");
+    const { values } = parsePandocAttributes(m?.[6] ?? "");
+    const width = values.width && /^\d+(\.\d+)?(px|%)?$/.test(values.width) ? values.width : undefined;
+    return [
+      "img",
+      {
+        "data-backlog-image": node.attrs.raw,
+        src: safeSrc(m?.[2] ?? m?.[3] ?? ""),
+        alt: unescape(m?.[1]) ?? "",
+        title: unescape(m?.[4] ?? m?.[5]),
+        style: width ? `width: ${/^\d+(\.\d+)?$/.test(width) ? `${width}px` : width}` : undefined,
+        class: "backlog-image",
+      },
+    ];
+  },
+
+  markdownTokenizer: {
+    name: "backlogImage",
+    level: "inline",
+    start: (src) => src.indexOf("!["),
+    tokenize: (src) => {
+      const m = IMAGE.exec(src);
+      if (m) return { type: "backlogImage", raw: m[0] };
+    },
+  },
+
+  parseMarkdown: (token, h) => h.createNode("backlogImage", { raw: token.raw }),
+
+  renderMarkdown: (node) => node.attrs?.raw ?? "",
+});
+
+/**
+ * Markdown comment line such as `[//]: # (list-break)`, which Backlog writes
+ * between two adjacent lists so they stay separate. Hidden; kept verbatim.
+ */
+export const MarkdownComment = Node.create({
+  name: "markdownComment",
+  group: "block",
+  atom: true,
+  selectable: false,
+
+  addAttributes() {
+    return { raw: { default: "", rendered: false } };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: "div[data-markdown-comment]",
+        getAttrs: (el) => ({ raw: el.getAttribute("data-markdown-comment") ?? "" }),
+      },
+    ];
+  },
+
+  renderHTML({ node }) {
+    return ["div", { "data-markdown-comment": node.attrs.raw, hidden: "" }];
+  },
+
+  markdownTokenizer: {
+    name: "markdownComment",
+    level: "block",
+    start: (src) => {
+      const m = /(^|\n)\[\/\/\]: # \(/.exec(src);
+      return m ? m.index + m[1].length : -1;
+    },
+    tokenize: (src) => {
+      const m = /^\[\/\/\]: # \([^)\n]*\)[ \t]*(?:\n|$)/.exec(src);
+      if (m) return { type: "markdownComment", raw: m[0], line: m[0].replace(/\n$/, "") };
+    },
+  },
+
+  parseMarkdown: (token, h) => h.createNode("markdownComment", { raw: token.line }),
+
+  renderMarkdown: (node) => node.attrs?.raw ?? "",
+});
+
+export const BacklogMarkdown = [
+  HeadingAttributes,
+  BacklogInline,
+  PandocSpan,
+  FencedDiv,
+  FencedAtom,
+  BacklogImage,
+  MarkdownComment,
+];
 
 const PLACEHOLDER = "BACKLOGFENCEDDIVPLACEHOLDER";
 
