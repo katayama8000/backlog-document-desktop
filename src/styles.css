@@ -161,8 +161,8 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 /* Drag handle on the sidebar's right edge; the visible line is the border. */
 .resizer {
   flex: none;
-  width: 9px;
-  margin: 0 -4px;
+  width: 13px;
+  margin: 0 -6px;
   position: relative;
   z-index: 1;
   cursor: col-resize;
