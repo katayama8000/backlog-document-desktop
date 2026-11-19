@@ -15,11 +15,11 @@
    A span's own `color` arrives as an inline style and wins over the default. */
 .editor .tiptap .backlog-underline { text-decoration: underline; }
 .editor .tiptap mark,
-.editor .tiptap .backlog-highlight { background-color: rgb(234 179 8 / 0.35); color: inherit; }
+.editor .tiptap .backlog-highlight { background-color: var(--highlight); color: inherit; }
 
 .editor .tiptap .backlog-user-mark { border-bottom: 1px dashed var(--muted); }
 .editor .tiptap .backlog-comment {
-  background-color: rgb(234 179 8 / 0.15);
-  border-bottom: 2px solid rgb(234 179 8 / 0.7);
+  background-color: color-mix(in srgb, var(--highlight) 45%, transparent);
+  border-bottom: 2px solid var(--marker-yellow-text);
 }
 .editor .tiptap .backlog-comment[title] { cursor: help; }

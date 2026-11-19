@@ -129,29 +129,25 @@ export const BacklogInline = Node.create({
 /** How a span with one of Backlog's classes looks: a viewer class, inline CSS and a hover title. */
 type SpanView = { className?: string; style?: Record<string, string | undefined>; title?: string };
 
-/** RGB channels behind the `text-fg-color-*` and `text-bg-color-*` classes. */
-const PALETTE = new Map([
-  ["grey", "128 128 128"],
-  ["gray", "128 128 128"],
-  ["red", "229 72 77"],
-  ["orange", "247 107 21"],
-  ["yellow", "234 179 8"],
-  ["green", "48 164 108"],
-  ["blue", "0 144 255"],
-  ["purple", "142 78 198"],
-  ["pink", "214 64 159"],
-  ["brown", "173 127 88"],
+/**
+ * Backlog's text-marker colors behind the `text-fg-color-*` and `text-bg-color-*`
+ * classes, as CSS variables defined in styles.css (light and dark).
+ */
+const MARKERS = new Set([
+  "pink", "bordeaux", "red", "beige", "orange", "yellow", "lime",
+  "green", "aqua", "blue", "purple", "magenta", "grey",
 ]);
+const MARKER_ALIASES = new Map([["gray", "grey"]]);
 
-/** `className="text-fg-color-grey text-bg-color-yellow"` → palette colors; unknown names add nothing. */
+/** `className="text-fg-color-grey text-bg-color-yellow"` → marker colors; unknown names add nothing. */
 function paletteStyle(className = ""): SpanView["style"] {
   const style: Record<string, string> = {};
   for (const name of className.split(/\s+/)) {
-    const [, layer, color] = /^text-(fg|bg)-color-([a-z]+)$/.exec(name) ?? [];
-    const rgb = PALETTE.get(color);
-    if (!rgb) continue;
-    if (layer === "fg") style.color = `rgb(${rgb})`;
-    else style["background-color"] = `rgb(${rgb} / 0.3)`;
+    const [, layer, raw] = /^text-(fg|bg)-color-([a-z]+)$/.exec(name) ?? [];
+    const color = MARKER_ALIASES.get(raw) ?? raw;
+    if (!MARKERS.has(color)) continue;
+    if (layer === "fg") style.color = `var(--marker-${color}-text)`;
+    else style["background-color"] = `var(--marker-${color}-bg)`;
   }
   return style;
 }
