@@ -19,8 +19,8 @@ export type BlockHead = {
 
 type Attrs = Record<string, string | undefined>;
 /** A DOMOutputSpec whose attributes are always present; `0` is the content hole. */
-export type Element = [tag: string, attrs: Attrs, ...children: Child[]];
-type Child = Element | string | 0;
+export type ElementSpec = [tag: string, attrs: Attrs, ...children: Child[]];
+type Child = ElementSpec | string | 0;
 
 const PAIR_ID_OR_CLASS = /[\w-]+=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s}]*)|[#.][^\s}]+/g;
 
@@ -41,9 +41,28 @@ function lookup<T>(table: Record<string, T>, key: string | undefined): T | undef
 const join = (sep: string, ...parts: (string | undefined)[]) =>
   parts.filter(Boolean).join(sep) || undefined;
 
+/** Only http(s) URLs reach `href` and `src`. */
+function httpUrl(value: string | undefined): URL | undefined {
+  try {
+    const url = new URL(value ?? "");
+    return url.protocol === "https:" || url.protocol === "http:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A link that opens outside the viewer, or plain text when `url` is not http(s). */
+function linkOrText(cls: string, url: URL | undefined, text: string): ElementSpec {
+  return url
+    ? ["a", { class: cls, href: url.href, target: "_blank", rel: "noopener noreferrer nofollow" }, text]
+    : ["span", { class: cls }, text];
+}
+
 // ── Fenced divs ─────────────────────────────────────────────────────
 
-type DivView = (head: BlockHead) => Element;
+type DivView = (head: BlockHead) => ElementSpec;
+
+const plainDiv: DivView = () => ["div", {}, 0];
 
 /** Callout colors, by `type` (or a `-color-*` class); anything else is neutral. */
 const CALLOUT_TONES: Record<string, string> = {
@@ -60,7 +79,7 @@ const DIV_VIEWS: Record<string, DivView> = {
       lookup(CALLOUT_TONES, values.type) ??
       lookup(CALLOUT_TONES, /(?:^|\s)-color-([\w-]+)/.exec(values.classes ?? "")?.[1]) ??
       "note";
-    const emoji: Element[] = values.emoji
+    const emoji: ElementSpec[] = values.emoji
       ? [["span", { class: "callout-emoji", "aria-hidden": "true" }, values.emoji]]
       : [];
     return ["aside", { class: `callout callout-${tone}` }, ...emoji, ["div", { class: "callout-body" }, 0]];
@@ -78,6 +97,37 @@ const DIV_VIEWS: Record<string, DivView> = {
   capturedTable: () => ["figure", {}, 0],
   figcaption: () => ["figcaption", {}, 0],
   blockComment: ({ values }) => ["div", { class: "block-comment", title: commentText(values.comment) }, 0],
+  ogp: (head) => {
+    const { values } = head;
+    if (!values.url) return plainDiv(head);
+    const meta = ogpMeta(values.ogp);
+    const url = httpUrl(values.url);
+    const image = httpUrl(meta.image);
+    const description: ElementSpec[] = meta.description
+      ? [["span", { class: "ogp-description" }, meta.description]]
+      : [];
+    const picture: ElementSpec[] = image
+      ? [["img", { class: "ogp-image", src: image.href, alt: "", loading: "lazy" }]]
+      : [];
+    // The card replaces the block's body, which only repeats the URL.
+    return [
+      "div",
+      { class: "ogp" },
+      [
+        "div",
+        { class: "ogp-card" },
+        [
+          "span",
+          { class: "ogp-text" },
+          linkOrText("ogp-title", url, meta.title || values.url),
+          ...description,
+          ["span", { class: "ogp-site" }, meta.siteName || url?.host || ""],
+        ],
+        ...picture,
+      ],
+      ["div", { class: "ogp-body", hidden: "" }, 0],
+    ];
+  },
   childlist: () => [
     "div",
     { class: "block-placeholder" },
@@ -96,6 +146,23 @@ function cellAttrs({ values }: BlockHead): Attrs {
     rowspan: span(values.rowspan),
     style: width ? `width: ${width}px` : undefined,
   };
+}
+
+/** Preview fields from the `ogp` JSON: `og:title` etc., or the same names without `og:`. */
+function ogpMeta(json: string | undefined): Partial<Record<"title" | "description" | "image" | "siteName", string>> {
+  let data: unknown;
+  try {
+    data = JSON.parse(json ?? "");
+  } catch {
+    return {};
+  }
+  if (!data || typeof data !== "object") return {};
+  const fields = data as Record<string, unknown>;
+  const pick = (key: string) => {
+    const value = fields[`og:${key}`] ?? fields[key];
+    return typeof value === "string" && value ? value : undefined;
+  };
+  return { title: pick("title"), description: pick("description"), image: pick("image"), siteName: pick("site_name") };
 }
 
 /**
@@ -119,10 +186,8 @@ function commentText(json: string | undefined): string | undefined {
   return texts.join("\n") || json;
 }
 
-const plainDiv: DivView = () => ["div", {}, 0];
-
 /** The element for `:::name {…}`; `open` is the fence line, kept on the element. */
-export function divView(open: string, headText: string): Element {
+export function divView(open: string, headText: string): ElementSpec {
   const head = parseHead(headText);
   const align = head.values.textAlign ?? head.values.align;
   const [tag, own, ...children] = (lookup(DIV_VIEWS, head.name) ?? plainDiv)(head);
@@ -142,14 +207,46 @@ export function divView(open: string, headText: string): Element {
 
 // ── One-line embeds ─────────────────────────────────────────────────
 
+type Embed = { label: string; icon: string; thumbnail?: (url: URL) => string | undefined };
+
+const EMBEDS: Record<string, Embed> = {
+  youtube: { label: "YouTube", icon: "▶", thumbnail: youtubeThumbnail },
+  video: { label: "Video", icon: "▶" },
+  sharedFileVideo: { label: "Shared file video", icon: "▶" },
+  figma: { label: "Figma", icon: "◆" },
+  cacoo: { label: "Cacoo", icon: "◆" },
+};
+
+/** The still image for watch, youtu.be, embed and shorts URLs, from img.youtube.com. */
+function youtubeThumbnail(url: URL): string | undefined {
+  const id =
+    url.hostname === "youtu.be"
+      ? url.pathname.slice(1)
+      : /(^|\.)youtube(-nocookie)?\.com$/.test(url.hostname)
+        ? (url.searchParams.get("v") ?? /^\/(?:embed|shorts|live)\/([^/]+)/.exec(url.pathname)?.[1])
+        : undefined;
+  return id && /^[\w-]{11}$/.test(id) ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : undefined;
+}
+
 /** The card for `:::youtube {…} :::`; `raw` is the source line, kept on the element. */
-export function embedView(raw: string, name: string, attrText: string): Element {
-  const { values } = parseHead(name, attrText);
-  const target = values.src || values.url || values.name || "";
+export function embedView(raw: string, name: string, attrText: string): ElementSpec {
+  const { id, values } = parseHead(name, attrText);
+  const kind = lookup(EMBEDS, name) ?? { label: name, icon: "▣" };
+  const source = values.src || values.url || values.name || (id ? `#${id}` : "");
+  const url = httpUrl(source);
+  const thumbnail = url && kind.thumbnail?.(url);
+  const picture: ElementSpec[] = thumbnail
+    ? [["img", { class: "embed-thumbnail", src: thumbnail, alt: "", loading: "lazy" }]]
+    : [];
   return [
     "div",
     { "data-fenced-atom": raw, class: `embed-card embed-${name}` },
-    ["span", { class: "embed-kind" }, name],
-    ["span", { class: "embed-target" }, target],
+    ...picture,
+    [
+      "span",
+      { class: "embed-text" },
+      ["span", { class: "embed-kind" }, ["span", { class: "embed-icon", "aria-hidden": "true" }, kind.icon], kind.label],
+      linkOrText("embed-target", url, source),
+    ],
   ];
 }

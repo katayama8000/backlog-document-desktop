@@ -106,6 +106,78 @@ const cases: Case[] = [
     html: (h) => h.includes("Child page list (not shown in this viewer)"),
   },
   {
+    name: "ogp: link preview from the ogp JSON, body hidden",
+    src: ':::ogp {url="https://example.com/post" ogp="%7B\\"og:title\\":\\"A post\\",\\"og:description\\":\\"About things\\",\\"og:image\\":\\"https://example.com/i.png\\",\\"og:site_name\\":\\"Example\\"%7D"}\n[https://example.com/post](https://example.com/post)\n:::',
+    html: (h) =>
+      hasTag(h, "a", { class: "ogp-title", href: "https://example.com/post", target: "_blank" }, "A post<") &&
+      hasTag(h, "span", { class: "ogp-description" }, "About things<") &&
+      hasTag(h, "span", { class: "ogp-site" }, "Example<") &&
+      hasTag(h, "img", { class: "ogp-image", src: "https://example.com/i.png" }) &&
+      hasTag(h, "div", { class: "ogp-body", hidden: "" }, "<p><a "),
+  },
+  {
+    name: "ogp: without JSON the URL is the title",
+    src: ':::ogp {url="https://example.com/x"}\n[https://example.com/x](https://example.com/x)\n:::',
+    html: (h) =>
+      hasTag(h, "a", { class: "ogp-title", href: "https://example.com/x" }, "https://example.com/x<") &&
+      hasTag(h, "span", { class: "ogp-site" }, "example.com<") &&
+      !h.includes("<img"),
+  },
+  {
+    name: "ogp: non-http URLs are text, never href or src",
+    src: ':::ogp {url="javascript:alert(1)" ogp="%7B\\"og:image\\":\\"javascript:x\\"%7D"}\nx\n:::',
+    html: (h) => hasTag(h, "span", { class: "ogp-title" }, "javascript:alert(1)<") && !/href=|<img/.test(h),
+  },
+  {
+    name: "youtube: thumbnail, label and link",
+    src: ':::youtube {src="https://www.youtube.com/watch?v=dQw4w9WgXcQ" start="30"} :::',
+    html: (h) =>
+      hasTag(h, "img", { class: "embed-thumbnail", src: "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }) &&
+      h.includes("</span>YouTube</span>") &&
+      hasTag(h, "a", { class: "embed-target", href: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
+  },
+  {
+    name: "youtube: short link",
+    src: ':::youtube {src="https://youtu.be/dQw4w9WgXcQ"} :::',
+    html: (h) => hasTag(h, "img", { src: "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg" }),
+  },
+  {
+    name: "youtube: no thumbnail for other hosts or unsafe URLs",
+    src: ':::youtube {src="https://evil.example/watch?v=dQw4w9WgXcQ"} :::\n\n:::youtube {src="javascript:alert(1)"} :::',
+    html: (h) =>
+      !h.includes("<img") &&
+      hasTag(h, "a", { href: "https://evil.example/watch?v=dQw4w9WgXcQ" }) &&
+      hasTag(h, "span", { class: "embed-target" }, "javascript:alert(1)<") &&
+      !h.includes('href="javascript'),
+  },
+  {
+    name: "video: relative source is text",
+    src: ':::video {src="a.mp4" width="100%"} :::',
+    html: (h) => h.includes("</span>Video</span>") && hasTag(h, "span", { class: "embed-target" }, "a.mp4<"),
+  },
+  {
+    name: "figma and cacoo: labeled links",
+    src: ':::figma {url="https://www.figma.com/file/abc"} :::\n\n:::cacoo {src="https://cacoo.com/diagrams/abc"} :::',
+    html: (h) =>
+      h.includes("</span>Figma</span>") &&
+      hasTag(h, "a", { href: "https://www.figma.com/file/abc" }) &&
+      h.includes("</span>Cacoo</span>") &&
+      hasTag(h, "a", { href: "https://cacoo.com/diagrams/abc" }),
+  },
+  {
+    name: "sharedFileVideo: name, or the file id",
+    src: ':::sharedFileVideo {#78 name="demo.mp4"} :::\n\n:::sharedFileVideo {#79} :::',
+    html: (h) =>
+      h.includes("</span>Shared file video</span>") &&
+      hasTag(h, "span", { class: "embed-target" }, "demo.mp4<") &&
+      hasTag(h, "span", { class: "embed-target" }, "#79<"),
+  },
+  {
+    name: "unknown embed keeps its name as the label",
+    src: ":::constructor :::",
+    html: (h) => h.includes("</span>constructor</span>"),
+  },
+  {
     name: "unknown div keeps the generic look",
     src: ':::constructor {textAlign="center"}\nx\n:::',
     html: (h) => hasTag(h, "div", { class: "fenced-div fenced-div-constructor", style: "text-align: center" }),
