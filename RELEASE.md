@@ -24,7 +24,7 @@ Releases are built by GitHub Actions (`.github/workflows/build-macos.yml`). Push
    git push origin v0.2.0
    ```
 
-4. **Wait for the build.** Open the **Build macOS app** run for the tag under the Actions tab and wait for it to finish.
+4. **Wait for the build.** Open the **Build macOS app** run for the tag under the Actions tab and wait for it to finish. The first build took about 7 minutes without a cache; later builds reuse the Rust cache.
 
 5. **Publish the release.** The run creates a draft release named `Backlog Document Desktop v0.2.0` with the `.dmg` attached. Under Releases, open the draft, write the release notes (**Generate release notes** lists the merged PRs), and click **Publish release**.
 
