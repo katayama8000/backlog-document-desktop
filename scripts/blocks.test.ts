@@ -1,6 +1,26 @@
 // Display of fenced divs and one-line embeds. Each case checks the exact
 // round-trip and what the viewer renders. Run: pnpm test
+import { getSchema } from "@tiptap/core";
+import { Node as PMNode } from "@tiptap/pm/model";
+import { domOutputSpecToHTMLString } from "@tiptap/static-renderer/pm/html-string";
+import { backlogExtensions } from "../src/markdown/index.ts";
+import { tocEntries, tocList } from "../src/markdown/toc.ts";
 import { run, type Case } from "./harness.ts";
+
+const schema = getSchema(backlogExtensions);
+
+/**
+ * The toc list the live editor shows for a parsed document. The static
+ * renderer has no editor, so it renders only the empty `<nav>`.
+ */
+function tocHtml(json: any): { html: string; headingsAtLinks: string[] } {
+  const doc = PMNode.fromJSON(schema, json);
+  const entries = tocEntries(doc);
+  return {
+    html: domOutputSpecToHTMLString(tocList(entries))(undefined),
+    headingsAtLinks: entries.map(({ pos }) => `${doc.nodeAt(pos)?.type.name}:${doc.nodeAt(pos)?.textContent}`),
+  };
+}
 
 /**
  * True when `html` has a `<tag>`, optionally followed right away by `inner`,
@@ -99,6 +119,23 @@ const cases: Case[] = [
     name: "block comment: non-JSON comment shown as is",
     src: ':::blockComment {comment="plain note"}\nx\n:::',
     html: (h) => hasTag(h, "div", { class: "block-comment", title: "plain note" }),
+  },
+  {
+    name: "toc: lists the headings and links to each",
+    src: "# Intro\n\n:::toc\n:::\n\n## Setup {#setup}\n\ntext\n\n:::callout {type=\"info\"}\n### Inside a callout\n:::",
+    html: (h) => hasTag(h, "nav", { class: "toc", "aria-label": "Table of contents" }),
+    expect: (j) => {
+      const { html, headingsAtLinks } = tocHtml(j);
+      return (
+        /<p class="toc-title">Contents<\/p><ol><li class="toc-level-1"><a [^>]*>Intro<\/a><\/li><li class="toc-level-2"><a [^>]*>Setup<\/a><\/li><li class="toc-level-3"><a [^>]*>Inside a callout<\/a><\/li><\/ol>/.test(html) &&
+        headingsAtLinks.join("|") === "heading:Intro|heading:Setup|heading:Inside a callout"
+      );
+    },
+  },
+  {
+    name: "toc: says so when there are no headings",
+    src: ":::toc\n:::",
+    expect: (j) => tocHtml(j).html.includes('<p class="toc-empty">No headings</p>'),
   },
   {
     name: "childlist: labeled instead of empty",

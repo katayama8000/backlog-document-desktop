@@ -4,9 +4,12 @@
 // so Markdown → TipTap → Markdown does not change these elements.
 
 import { Node, type MarkdownToken } from "@tiptap/core";
-import { divView, embedView } from "./blockViews.ts";
+import { divView, embedView, parseHead } from "./blockViews.ts";
+import { tocPlugin } from "./toc.ts";
 
 export const FENCE_OPEN = /^(:{3,})[ \t]*([^\s:][^\n]*)$/;
+/** The `name {…}` of a fence line such as `:::callout {type="info"}`. */
+const headOf = (open: string) => FENCE_OPEN.exec(open)?.[2] ?? "";
 const FENCE_CLOSE = /^:{3,}[ \t]*$/;
 /** One-line block such as `:::youtube {src="…"} :::` (Backlog escapes `{ }` in values). */
 const FENCE_ATOM = /^ {0,3}:{3,}[ \t]*([\w-]+)(?:[ \t]+\{([^}\n]*)\})?[ \t]*:{3,}[ \t]*$/;
@@ -40,7 +43,11 @@ export const FencedDiv = Node.create({
   },
 
   renderHTML({ node }) {
-    return divView(node.attrs.open, FENCE_OPEN.exec(node.attrs.open)?.[2] ?? "");
+    return divView(node.attrs.open, headOf(node.attrs.open));
+  },
+
+  addProseMirrorPlugins() {
+    return [tocPlugin((node) => node.type === this.type && parseHead(headOf(node.attrs.open)).name === "toc")];
   },
 
   markdownTokenizer: {

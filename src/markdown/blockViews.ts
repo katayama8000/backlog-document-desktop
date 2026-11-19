@@ -128,6 +128,8 @@ const DIV_VIEWS: Record<string, DivView> = {
       ["div", { class: "ogp-body", hidden: "" }, 0],
     ];
   },
+  // The live editor fills this with the headings, see toc.ts.
+  toc: () => ["nav", { class: "toc", "aria-label": "Table of contents" }, 0],
   childlist: () => [
     "div",
     { class: "block-placeholder" },
