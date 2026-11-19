@@ -36,6 +36,7 @@ On first launch, enter your space URL (e.g. `https://example.backlog.jp`) and an
 cargo test --workspace   # Rust tests; also regenerates TypeScript bindings in src/bindings
 pnpm exec tsc --noEmit   # type-check the frontend
 pnpm test                # Markdown round-trip tests for Backlog-specific syntax
+pnpm test:realdocs       # round-trip every document in the app's local cache
 ```
 
 TypeScript types in `src/bindings/` are generated from Rust structs by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit them by hand.

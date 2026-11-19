@@ -1,19 +1,7 @@
-// Markdown round-trip check for the Backlog extensions (issue #1).
-// Run: node scripts/roundtrip.test.ts
-import { getSchema } from "@tiptap/core";
-import { MarkdownManager } from "@tiptap/markdown";
-import { Node as PMNode } from "@tiptap/pm/model";
-import { backlogExtensions as extensions } from "../src/markdown/index.ts";
+// Markdown round-trip cases for the Backlog extensions. Run: pnpm test
+import { run, type Case } from "./harness.ts";
 
-const schema = getSchema(extensions);
-const md = new MarkdownManager({ extensions });
-
-function roundTrip(src: string) {
-  const json = PMNode.fromJSON(schema, md.parse(src)).toJSON();
-  return { json, out: md.serialize(json) };
-}
-
-const cases: { name: string; src: string; expect?: (json: any) => boolean; sameAs?: string }[] = [
+const cases: Case[] = [
   { name: "heading id", src: "## Heading {#abc}", expect: (j) => j.content[0].content[1].type === "headingAttributes" && j.content[0].content[0].text === "Heading" },
   { name: "heading id + class", src: "# 見出し {#h-1 .foo}" },
   { name: "dateMention", src: 'Due [dateMention label="2026/08/14" date="2026-08-14T00:00:00+09:00" mentionType="inline"] ok', expect: (j) => j.content[0].content[1].type === "backlogInline" },
@@ -69,14 +57,4 @@ const cases: { name: string; src: string; expect?: (json: any) => boolean; sameA
   { name: "all together", src: '## Title {#t1}\n\n:::paragraph {}\nDue [dateMention label="2026/08/14" date="2026-08-14T00:00:00+09:00" mentionType="inline"] — [note]{.textStyle color="" backgroundColor=""}\n:::\n\n- item [x]{.textStyle color="red"}' },
 ];
 
-let failed = 0;
-for (const c of cases) {
-  const { json, out } = roundTrip(c.src);
-  const same = out === (c.sameAs ?? c.src);
-  const shape = c.expect ? c.expect(json) : true;
-  if (!same || !shape) failed++;
-  console.log(`${same && shape ? "ok  " : "FAIL"} ${c.name}`);
-  if (!same) console.log(`  in:  ${JSON.stringify(c.src)}\n  out: ${JSON.stringify(out)}`);
-  if (!shape) console.log(`  unexpected tree: ${JSON.stringify(json)}`);
-}
-process.exit(failed ? 1 : 0);
+run(cases);
