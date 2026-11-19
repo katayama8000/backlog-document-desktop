@@ -149,16 +149,30 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 /* Layout */
 .layout { display: flex; height: 100vh; }
 .sidebar {
-  width: 280px;
+  width: var(--sidebar-w, 280px);
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 14px 10px 10px;
-  border-right: 1px solid var(--border);
   background: var(--bg-sub);
   overflow: hidden;
 }
+/* Drag handle on the sidebar's right edge; the visible line is the border. */
+.resizer {
+  flex: none;
+  width: 9px;
+  margin: 0 -4px;
+  position: relative;
+  z-index: 1;
+  cursor: col-resize;
+  background: linear-gradient(var(--border), var(--border)) center / 1px 100% no-repeat;
+  outline: none;
+}
+.resizer:hover, .resizer:focus-visible, body.resizing .resizer {
+  background: linear-gradient(var(--brand), var(--brand)) center / 3px 100% no-repeat;
+}
+body.resizing { cursor: col-resize; user-select: none; }
 .sidebar-header { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
 .space-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .space { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
