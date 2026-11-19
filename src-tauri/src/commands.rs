@@ -64,7 +64,10 @@ impl From<StoredDocument> for DocumentView {
 /// Loads saved settings and prepares the API client when possible.
 #[tauri::command]
 pub fn load_settings(state: State<'_, AppState>) -> CommandResult<Settings> {
-    let space_url = state.store.setting(SPACE_URL)?;
+    let space_url = state
+        .store
+        .setting(SPACE_URL)?
+        .or_else(|| secrets::dev_credentials().map(|(url, _)| url.as_str().to_owned()));
     let project_key = state.store.setting(PROJECT_KEY)?;
     let mut has_api_key = false;
     if let Some(url) = space_url.as_deref().map(SpaceUrl::parse).transpose()?

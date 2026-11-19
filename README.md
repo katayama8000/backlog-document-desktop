@@ -32,6 +32,11 @@ pnpm tauri dev
 On first launch, enter your space URL (e.g. `https://example.backlog.jp`) and an API key
 (Backlog → Personal settings → API). The key is stored in the macOS Keychain.
 
+macOS asks for your login password whenever a rebuilt binary reads the Keychain. To avoid
+that during development, copy `.env.example` to `.env` and set `BACKLOG_SPACE_URL` and
+`BACKLOG_API_KEY`. Debug builds then use these and never touch the Keychain. `.env` is
+git-ignored, and release builds ignore it.
+
 ```sh
 cargo test --workspace   # Rust tests; also regenerates TypeScript bindings in src/bindings
 pnpm exec tsc --noEmit   # type-check the frontend

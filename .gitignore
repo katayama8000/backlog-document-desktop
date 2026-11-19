@@ -25,3 +25,9 @@ dist-ssr
 
 # Rust
 /target
+
+# Local credentials for debug builds (see .env.example)
+.env
+
+# Claude Code agent worktrees
+.claude/worktrees/
