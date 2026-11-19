@@ -10,3 +10,14 @@
 }
 .editor .tiptap .backlog-chip-detail { margin-left: 6px; color: var(--muted); }
 .editor .tiptap .backlog-inlineMath { font-family: ui-monospace, Menlo, monospace; }
+
+/* A span's own `color` arrives as an inline style and wins over the default. */
+.editor .tiptap .backlog-underline { text-decoration: underline; }
+.editor .tiptap .backlog-highlight { background-color: rgb(234 179 8 / 0.35); color: inherit; }
+
+.editor .tiptap .backlog-user-mark { border-bottom: 1px dashed var(--muted); }
+.editor .tiptap .backlog-comment {
+  background-color: rgb(234 179 8 / 0.15);
+  border-bottom: 2px solid rgb(234 179 8 / 0.7);
+}
+.editor .tiptap .backlog-comment[title] { cursor: help; }

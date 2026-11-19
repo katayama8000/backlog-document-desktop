@@ -107,6 +107,52 @@ export const BacklogInline = Node.create({
   renderMarkdown: (node) => node.attrs?.raw ?? "",
 });
 
+// ── Pandoc spans ────────────────────────────────────────────────────
+
+/** How a span with one of Backlog's classes looks: a viewer class, inline CSS and a hover title. */
+type SpanView = { className?: string; style?: Record<string, string | undefined>; title?: string };
+
+/** RGB channels behind the `text-fg-color-*` and `text-bg-color-*` classes. */
+const PALETTE = new Map([
+  ["grey", "128 128 128"],
+  ["gray", "128 128 128"],
+  ["red", "229 72 77"],
+  ["orange", "247 107 21"],
+  ["yellow", "234 179 8"],
+  ["green", "48 164 108"],
+  ["blue", "0 144 255"],
+  ["purple", "142 78 198"],
+  ["pink", "214 64 159"],
+  ["brown", "173 127 88"],
+]);
+
+/** `className="text-fg-color-grey text-bg-color-yellow"` → palette colors; unknown names add nothing. */
+function paletteStyle(className = ""): SpanView["style"] {
+  const style: Record<string, string> = {};
+  for (const name of className.split(/\s+/)) {
+    const [, layer, color] = /^text-(fg|bg)-color-([a-z]+)$/.exec(name) ?? [];
+    const rgb = PALETTE.get(color);
+    if (!rgb) continue;
+    if (layer === "fg") style.color = `rgb(${rgb})`;
+    else style["background-color"] = `rgb(${rgb} / 0.3)`;
+  }
+  return style;
+}
+
+/** Span classes the viewer styles. A Map, because class names come from documents. */
+const SPAN_VIEWS = new Map<string, (values: Record<string, string>) => SpanView>([
+  ["textStyle", (v) => ({ style: { color: safeColor(v.color), "background-color": safeColor(v.backgroundColor) } })],
+  ["underline", () => ({ className: "backlog-underline" })],
+  ["highlight", (v) => ({ className: "backlog-highlight", style: { "background-color": safeColor(v.color) } })],
+  ["markWithClass", (v) => ({ style: paletteStyle(v.className) })],
+  ["markWithUser", () => ({ className: "backlog-user-mark" })],
+  ["inlineComment", (v) => {
+    const text = parseJson(v.comment)?.text;
+    return { className: "backlog-comment", title: typeof text === "string" && text ? text : undefined };
+  }],
+  ["commentMarker", () => ({ className: "backlog-comment" })],
+]);
+
 /** Pandoc bracketed span: `[text]{.textStyle color="" backgroundColor=""}`. */
 export const PandocSpan = Mark.create({
   name: "pandocSpan",
@@ -130,18 +176,20 @@ export const PandocSpan = Mark.create({
 
   renderHTML({ mark }) {
     const { id, classes, values } = parsePandocAttributes(mark.attrs.attrs);
-    const color = safeColor(values.color);
-    const background = safeColor(values.backgroundColor);
-    const style = [color && `color: ${color}`, background && `background-color: ${background}`]
-      .filter(Boolean)
+    const views = classes.flatMap((c) => SPAN_VIEWS.get(c)?.(values) ?? []);
+    const className = views.flatMap((v) => v.className ?? []).join(" ");
+    const style = views
+      .flatMap((v) => Object.entries(v.style ?? {}))
+      .flatMap(([property, value]) => (value ? `${property}: ${value}` : []))
       .join("; ");
     return [
       "span",
       {
         "data-pandoc-span": mark.attrs.attrs,
         id,
-        class: classes.join(" ") || undefined,
+        class: className || undefined,
         style: style || undefined,
+        title: views.find((v) => v.title)?.title,
       },
       0,
     ];
