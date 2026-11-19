@@ -4,9 +4,12 @@
 // so Markdown → TipTap → Markdown does not change these elements.
 
 import { Node, type MarkdownToken } from "@tiptap/core";
-import { parsePandocAttributes } from "./attrs.ts";
+import { divView, embedView, parseHead } from "./blockViews.ts";
+import { tocPlugin } from "./toc.ts";
 
 export const FENCE_OPEN = /^(:{3,})[ \t]*([^\s:][^\n]*)$/;
+/** The `name {…}` of a fence line such as `:::callout {type="info"}`. */
+const headOf = (open: string) => FENCE_OPEN.exec(open)?.[2] ?? "";
 const FENCE_CLOSE = /^:{3,}[ \t]*$/;
 /** One-line block such as `:::youtube {src="…"} :::` (Backlog escapes `{ }` in values). */
 const FENCE_ATOM = /^ {0,3}:{3,}[ \t]*([\w-]+)(?:[ \t]+\{([^}\n]*)\})?[ \t]*:{3,}[ \t]*$/;
@@ -40,23 +43,11 @@ export const FencedDiv = Node.create({
   },
 
   renderHTML({ node }) {
-    const head = FENCE_OPEN.exec(node.attrs.open)?.[2] ?? "";
-    const name = /^[\w-]+/.exec(head)?.[0];
-    const { id, classes, values } = parsePandocAttributes(head);
-    const align = values.textAlign ?? values.align;
-    return [
-      "div",
-      {
-        "data-fenced-div": node.attrs.open,
-        id,
-        class: ["fenced-div", name && `fenced-div-${name}`, ...classes].filter(Boolean).join(" "),
-        style:
-          align && /^(left|right|center|justify|start|end)$/.test(align)
-            ? `text-align: ${align}`
-            : undefined,
-      },
-      0,
-    ];
+    return divView(node.attrs.open, headOf(node.attrs.open));
+  },
+
+  addProseMirrorPlugins() {
+    return [tocPlugin((node) => node.type === this.type && parseHead(headOf(node.attrs.open)).name === "toc")];
   },
 
   markdownTokenizer: {
@@ -151,15 +142,7 @@ export const FencedAtom = Node.create({
 
   renderHTML({ node }) {
     const m = FENCE_ATOM.exec(node.attrs.raw);
-    const name = m?.[1] ?? "";
-    const { values } = parsePandocAttributes(m?.[2] ?? "");
-    const target = values.src || values.url || values.name || "";
-    return [
-      "div",
-      { "data-fenced-atom": node.attrs.raw, class: `embed-card embed-${name}` },
-      ["span", { class: "embed-kind" }, name],
-      ["span", { class: "embed-target" }, target],
-    ];
+    return embedView(node.attrs.raw, m?.[1] ?? "", m?.[2] ?? "");
   },
 
   markdownTokenizer: {
