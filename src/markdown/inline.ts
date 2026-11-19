@@ -6,16 +6,51 @@
 import { Mark, Node } from "@tiptap/core";
 import { parsePandocAttributes, SHORTCODE, safeColor, matchBracket } from "./attrs.ts";
 
-/** Native emoji character from `[emoji id="{\"c\":\"🍒\",…}"]`, if any. */
-function emojiChar(shortId: string | undefined, json: string | undefined): string | undefined {
-  if (shortId || !json) return undefined;
+function parseJson(json: string | undefined): any {
   try {
-    const parsed = JSON.parse(json);
-    return typeof parsed?.c === "string" ? parsed.c : undefined;
+    return json ? JSON.parse(json) : undefined;
   } catch {
     return undefined;
   }
 }
+
+// ── Shortcode chips ─────────────────────────────────────────────────
+
+type Shortcode = { name: string; id?: string; values: Record<string, string> };
+
+/** What a chip shows: a label, and an optional muted detail after it. */
+type Chip = { label: string; detail?: string };
+
+const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+/** `98765` → `96.5 KB`. Anything but a byte count gives no detail. */
+function formatSize(bytes: string | undefined): string | undefined {
+  if (!/^\d+$/.test(bytes ?? "")) return undefined;
+  let n = Number(bytes);
+  let unit = 0;
+  for (; n >= 1024 && unit < SIZE_UNITS.length - 1; unit++) n /= 1024;
+  return `${unit ? Number(n.toFixed(1)) : n} ${SIZE_UNITS[unit]}`;
+}
+
+const fileChip = ({ name, values }: Shortcode): Chip => ({
+  label: values.filename || values.name || name,
+  detail: formatSize(values.size),
+});
+
+/** Chips that show more than the label. A Map, because names come from documents. */
+const CHIPS = new Map<string, (s: Shortcode) => Chip | undefined>([
+  // Native character from `[emoji id="{\"c\":\"🍒\",…}"]`; `[emoji #smile …]` keeps its label.
+  ["emoji", ({ id, values }) => {
+    const c = id ? undefined : parseJson(values.id)?.c;
+    return typeof c === "string" ? { label: c } : undefined;
+  }],
+  ["inlineMath", ({ values }) => (values.latex ? { label: values.latex } : undefined)],
+  ["attachmentBadge", fileChip],
+  ["sharedFileAttachmentBadge", fileChip],
+  ["sharedFileImage", fileChip],
+]);
+
+const defaultChip = ({ name, values }: Shortcode): Chip => ({ label: values.label || values.name || name });
 
 /**
  * Backlog inline elements such as
@@ -45,16 +80,16 @@ export const BacklogInline = Node.create({
     const raw: string = node.attrs.raw;
     const name = /^\[([\w-]+)/.exec(raw)?.[1] ?? "";
     const { id, values } = parsePandocAttributes(raw.slice(name.length + 1, -1));
-    const label = (name === "emoji" && emojiChar(id, values.id)) || values.label || values.name || name;
-    return [
-      "span",
-      {
-        "data-backlog-inline": raw,
-        class: `backlog-chip backlog-${name}`,
-        title: values.date ?? raw,
-      },
-      label,
-    ];
+    const shortcode = { name, id, values };
+    const { label, detail } = CHIPS.get(name)?.(shortcode) ?? defaultChip(shortcode);
+    const attrs = {
+      "data-backlog-inline": raw,
+      class: `backlog-chip backlog-${name}`,
+      title: values.date ?? raw,
+    };
+    return detail
+      ? ["span", attrs, label, ["span", { class: "backlog-chip-detail" }, detail]]
+      : ["span", attrs, label];
   },
 
   markdownTokenizer: {
