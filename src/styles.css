@@ -1,15 +1,16 @@
 :root {
-  /* Backlog palette. Brand green is for surfaces (buttons, selection);
-     text on white uses the deeper green for contrast. */
-  --brand: #42ce9f;
-  --brand-strong: #007050;
+  /* Backlog's app palette: main green for surfaces and focus, accent green
+     for primary buttons, a deeper green for links. */
+  --brand: #4caf93;
+  --brand-strong: #2c9a7a;
   --on-brand-strong: #ffffff;
+  --brand-tint: #ddefe5;
   --bg: #ffffff;
-  --bg-sub: #f5f5f7;
-  --fg: #1d1e2a;
-  --muted: #74758b;
-  --border: #e3e3e8;
-  --accent: #007050;
+  --bg-sub: #f5f5f5;
+  --fg: #222222;
+  --muted: #767676;
+  --border: #cccccc;
+  --accent: #00836b;
   --info: #7a6abf;
   --error: #cf1c1c;
   --ok: #277d12;
@@ -39,12 +40,15 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --brand-strong: #2c9a7a;
-    --bg: #1d1e2a;
-    --bg-sub: #262735;
-    --fg: #e3e3e8;
-    --muted: #b4b5c6;
-    --border: #3b3c4b;
+    --brand: #31866e;
+    --brand-strong: #2b8269;
+    --on-brand-strong: #333333;
+    --brand-tint: #3e3e3e;
+    --bg: #333333;
+    --bg-sub: #2f2f2f;
+    --fg: #dadada;
+    --muted: #9c9c9c;
+    --border: #4e4e4e;
     --accent: #42ce9f;
     --info: #bbacf6;
     --error: #ee8181;
@@ -85,7 +89,8 @@ button, input, select {
 }
 button { cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
-button.primary { background: var(--brand-strong); border-color: var(--brand-strong); color: var(--on-brand-strong); font-weight: 600; }
+button.primary { background: var(--brand-strong); border: 2px solid var(--brand-strong); color: var(--on-brand-strong); font-weight: 700; }
+button.primary:hover:not(:disabled) { background: var(--bg); color: var(--brand-strong); }
 button.link { border: none; background: none; color: var(--accent); padding: 0; }
 
 .center { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 16px; }
@@ -132,7 +137,7 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 /* Tree */
 .tree { overflow-y: auto; flex: 1; }
 .tree-item { display: flex; align-items: center; border-radius: 6px; }
-.tree-item.selected { background: color-mix(in srgb, var(--brand) 18%, var(--bg-sub)); box-shadow: inset 3px 0 0 var(--brand); }
+.tree-item.selected { background: var(--brand-tint); box-shadow: inset 3px 0 0 var(--brand); }
 .tree-item button { border: none; background: none; padding: 4px; text-align: left; }
 .tree-item .toggle { width: 20px; color: var(--muted); flex: none; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
