@@ -52,10 +52,10 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
   return (
     <article className="document">
       <header className="document-header">
-        <h1>{doc.data.title || "(Untitled)"}</h1>
-        <p className="muted small">
-          Updated {doc.data.updated ? formatTime(doc.data.updated) : "-"}
-          {doc.fromCache && <span className="badge">Offline (cached)</span>}
+        <h1 className="document-title">{doc.data.title || "(Untitled)"}</h1>
+        <p className="document-meta">
+          {doc.data.updated ? `Updated ${formatTime(doc.data.updated)}` : "Never updated"}
+          {doc.fromCache && <span className="badge">Cached copy</span>}
         </p>
       </header>
       <EditorContent editor={editor} className="editor" />

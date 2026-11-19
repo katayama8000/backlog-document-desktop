@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { useConnection } from "../connection";
+import { Icon } from "./Icon";
 import type { DocumentTree } from "../bindings/DocumentTree";
 import type { Fetched } from "../bindings/Fetched";
 import type { Project } from "../bindings/Project";
@@ -54,12 +55,14 @@ export function Sidebar({ settings, tree, onTreeChange, selectedId, onSelect, on
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <span className="space" title={settings.spaceUrl ?? ""}>
-          {settings.spaceUrl?.replace("https://", "")}
-        </span>
-        <ConnectionPill />
-        <button className="link" onClick={onOpenSettings}>
-          Settings
+        <div className="space-block">
+          <span className="space" title={settings.spaceUrl ?? ""}>
+            {settings.spaceUrl?.replace("https://", "")}
+          </span>
+          <ConnectionPill />
+        </div>
+        <button className="icon-button" onClick={onOpenSettings} title="Settings" aria-label="Settings">
+          <Icon name="settings" />
         </button>
       </div>
 
@@ -79,16 +82,18 @@ export function Sidebar({ settings, tree, onTreeChange, selectedId, onSelect, on
           ))}
         </select>
         <button
+          className="icon-button"
           onClick={() => projectKey && loadTree(projectKey)}
           disabled={!projectKey || loadingTree}
           title="Reload tree"
+          aria-label="Reload tree"
         >
-          ↻
+          <Icon name="reload" className={loadingTree ? "spin" : undefined} />
         </button>
       </div>
 
       {(projects?.fromCache || tree?.fromCache) && (
-        <p className="badge">Offline (cached at {formatTime(tree?.fetchedAt ?? projects!.fetchedAt)})</p>
+        <p className="notice">Showing data cached at {formatTime(tree?.fetchedAt ?? projects!.fetchedAt)}</p>
       )}
       {error && <p className="error small">{error}</p>}
 
@@ -119,11 +124,12 @@ function TreeItem({
     <div>
       <div className={`tree-item ${node.id === selectedId ? "selected" : ""}`}>
         <button
-          className="toggle"
+          className={`toggle ${open ? "open" : ""}`}
           onClick={() => setOpen(!open)}
           style={{ visibility: hasChildren ? "visible" : "hidden" }}
+          aria-label={open ? "Collapse" : "Expand"}
         >
-          {open ? "▾" : "▸"}
+          <Icon name="chevron" />
         </button>
         <button className="tree-label" onClick={() => onSelect(node.id)}>
           {node.name || "(Untitled)"}
