@@ -45,7 +45,63 @@ const join = (sep: string, ...parts: (string | undefined)[]) =>
 
 type DivView = (head: BlockHead) => Element;
 
-const DIV_VIEWS: Record<string, DivView> = {};
+/** Callout colors, by `type` (or a `-color-*` class); anything else is neutral. */
+const CALLOUT_TONES: Record<string, string> = {
+  info: "info",
+  warning: "warning",
+  success: "success",
+  error: "error",
+  danger: "error",
+};
+
+const DIV_VIEWS: Record<string, DivView> = {
+  callout: ({ values }) => {
+    const tone =
+      lookup(CALLOUT_TONES, values.type) ??
+      lookup(CALLOUT_TONES, /(?:^|\s)-color-([\w-]+)/.exec(values.classes ?? "")?.[1]) ??
+      "note";
+    const emoji: Element[] = values.emoji
+      ? [["span", { class: "callout-emoji", "aria-hidden": "true" }, values.emoji]]
+      : [];
+    return ["aside", { class: `callout callout-${tone}` }, ...emoji, ["div", { class: "callout-body" }, 0]];
+  },
+  details: ({ flags }) => ["details", { open: flags.includes("open") ? "" : undefined }, 0],
+  detailsSummary: () => ["summary", {}, 0],
+  detailsContent: () => ["div", {}, 0],
+  definitionList: () => ["dl", {}, 0],
+  definitionTerm: () => ["dt", {}, 0],
+  definitionDescription: () => ["dd", {}, 0],
+  capturedTable: () => ["figure", {}, 0],
+  figcaption: () => ["figcaption", {}, 0],
+  blockComment: ({ values }) => ["div", { class: "block-comment", title: commentText(values.comment) }, 0],
+  childlist: () => [
+    "div",
+    { class: "block-placeholder" },
+    ["p", { class: "block-placeholder-label" }, "Child page list (not shown in this viewer)"],
+    ["div", {}, 0],
+  ],
+};
+
+/**
+ * Text for the tooltip of `blockComment {comment="…"}`. The value is JSON; show
+ * the strings under text-like keys, or the value itself when there are none.
+ */
+function commentText(json: string | undefined): string | undefined {
+  if (!json) return undefined;
+  const texts: string[] = [];
+  const walk = (value: unknown, key: string): void => {
+    if (typeof value === "string") {
+      if (/^(text|content|comment|body|message)$/.test(key)) texts.push(value);
+    } else if (Array.isArray(value)) value.forEach((v) => walk(v, key));
+    else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) walk(v, k);
+  };
+  try {
+    walk(JSON.parse(json), "text");
+  } catch {
+    return json;
+  }
+  return texts.join("\n") || json;
+}
 
 const plainDiv: DivView = () => ["div", {}, 0];
 
