@@ -103,6 +103,7 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 .document { max-width: 860px; margin: 0 auto; padding: 24px 32px 64px; }
 .document-header { border-bottom: 1px solid var(--border); margin-bottom: 16px; }
 .editor .tiptap { outline: none; line-height: 1.7; }
+.editor a { color: var(--accent); }
 .editor .tiptap pre { background: var(--bg-sub); padding: 12px; border-radius: 6px; overflow-x: auto; }
 .editor .tiptap code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .editor .tiptap table { border-collapse: collapse; margin: 12px 0; }
