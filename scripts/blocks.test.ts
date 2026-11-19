@@ -138,11 +138,6 @@ const cases: Case[] = [
     expect: (j) => tocHtml(j).html.includes('<p class="toc-empty">No headings</p>'),
   },
   {
-    name: "childlist: labeled instead of empty",
-    src: ":::childlist\n:::",
-    html: (h) => h.includes("Child page list (not shown in this viewer)"),
-  },
-  {
     name: "ogp: link preview from the ogp JSON, body hidden",
     src: ':::ogp {url="https://example.com/post" ogp="%7B\\"og:title\\":\\"A post\\",\\"og:description\\":\\"About things\\",\\"og:image\\":\\"https://example.com/i.png\\",\\"og:site_name\\":\\"Example\\"%7D"}\n[https://example.com/post](https://example.com/post)\n:::',
     html: (h) =>

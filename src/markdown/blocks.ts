@@ -4,7 +4,9 @@
 // so Markdown → TipTap → Markdown does not change these elements.
 
 import { Node, type MarkdownToken } from "@tiptap/core";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import { divView, embedView, parseHead } from "./blockViews.ts";
+import { childListPlugin } from "./childlist.ts";
 import { tocPlugin } from "./toc.ts";
 
 export const FENCE_OPEN = /^(:{3,})[ \t]*([^\s:][^\n]*)$/;
@@ -47,7 +49,9 @@ export const FencedDiv = Node.create({
   },
 
   addProseMirrorPlugins() {
-    return [tocPlugin((node) => node.type === this.type && parseHead(headOf(node.attrs.open)).name === "toc")];
+    const named = (name: string) => (node: PMNode) =>
+      node.type === this.type && parseHead(headOf(node.attrs.open)).name === name;
+    return [tocPlugin(named("toc")), childListPlugin(named("childlist"))];
   },
 
   markdownTokenizer: {
