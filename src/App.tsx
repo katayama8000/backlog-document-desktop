@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 import { api, errorMessage } from "./api";
 import type { DocumentTree } from "./bindings/DocumentTree";
 import type { Fetched } from "./bindings/Fetched";
 import type { Settings } from "./bindings/Settings";
 import { DocumentViewer } from "./components/DocumentViewer";
 import { SettingsForm } from "./components/SettingsForm";
+import { Resizer } from "./components/Resizer";
 import { Sidebar } from "./components/Sidebar";
+import { loadWidth, saveWidth } from "./sidebarWidth";
 
 type Screen =
   | { kind: "loading" }
@@ -17,6 +19,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "loading" });
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [tree, setTree] = useState<Fetched<DocumentTree> | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(loadWidth);
 
   const reload = () =>
     api
@@ -57,7 +60,7 @@ export default function App() {
       );
     case "main":
       return (
-        <div className="layout">
+        <div className="layout" style={{ "--sidebar-w": `${sidebarWidth}px` } as CSSProperties}>
           <Sidebar
             settings={screen.settings}
             tree={tree}
@@ -68,6 +71,7 @@ export default function App() {
               setScreen({ kind: "settings", settings: screen.settings })
             }
           />
+          <Resizer width={sidebarWidth} onChange={setSidebarWidth} onCommit={saveWidth} />
           <main className="content">
             {documentId ? (
               <DocumentViewer
