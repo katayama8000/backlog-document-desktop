@@ -1,3 +1,4 @@
+mod assets;
 mod commands;
 mod error;
 mod secrets;
@@ -19,6 +20,7 @@ pub fn run() {
             app.manage(AppState::new(store));
             Ok(())
         })
+        .register_asynchronous_uri_scheme_protocol(assets::SCHEME, assets::handle)
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::connect,
