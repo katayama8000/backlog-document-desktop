@@ -1,0 +1,2 @@
+/* Images. Uses the theme tokens from src/styles.css. */
+.editor .tiptap .backlog-image { max-width: 100%; height: auto; }

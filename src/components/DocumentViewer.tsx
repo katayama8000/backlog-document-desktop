@@ -6,6 +6,9 @@ import type { DocumentView } from "../bindings/DocumentView";
 import type { Fetched } from "../bindings/Fetched";
 import { lineDiff } from "../lineDiff";
 import { backlogExtensions } from "../markdown";
+import "../markdown/blocks.css";
+import "../markdown/image.css";
+import "../markdown/inline.css";
 import { formatTime } from "./Sidebar";
 
 export function DocumentViewer({ documentId }: { documentId: string }) {

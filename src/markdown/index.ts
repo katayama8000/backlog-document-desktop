@@ -1,10 +1,16 @@
 // The full set of TipTap extensions used to read Backlog documents.
 // Shared by the viewer and the round-trip tests so they can't drift apart.
+// Order matters: marked tries custom tokenizers in registration order.
 
 import { TaskList } from "@tiptap/extension-list";
 import { TableKit } from "@tiptap/extension-table";
 import StarterKit from "@tiptap/starter-kit";
-import { BacklogListItem, BacklogMarkdown, BacklogTaskItem } from "./backlog.ts";
+import { FencedAtom, FencedDiv } from "./blocks.ts";
+import { MarkdownComment } from "./comment.ts";
+import { HeadingAttributes } from "./heading.ts";
+import { BacklogImage } from "./image.ts";
+import { BacklogInline, PandocSpan } from "./inline.ts";
+import { BacklogListItem, BacklogTaskItem } from "./lists.ts";
 import {
   BacklogHardBreak,
   BacklogLink,
@@ -26,5 +32,11 @@ export const backlogExtensions = [
   BacklogTable,
   TaskList,
   BacklogTaskItem,
-  ...BacklogMarkdown,
+  HeadingAttributes,
+  BacklogInline,
+  PandocSpan,
+  FencedDiv,
+  FencedAtom,
+  BacklogImage,
+  MarkdownComment,
 ];
