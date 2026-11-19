@@ -4,7 +4,9 @@
 // so Markdown → TipTap → Markdown does not change these elements.
 
 import { Mark, Node } from "@tiptap/core";
+import { assetUrl, sharedFileRef } from "./assets.ts";
 import { parsePandocAttributes, SHORTCODE, safeColor, matchBracket } from "./attrs.ts";
+import { widthStyle } from "./image.ts";
 
 function parseJson(json: string | undefined): any {
   try {
@@ -47,6 +49,7 @@ const CHIPS = new Map<string, (s: Shortcode) => Chip | undefined>([
   ["inlineMath", ({ values }) => (values.latex ? { label: values.latex } : undefined)],
   ["attachmentBadge", fileChip],
   ["sharedFileAttachmentBadge", fileChip],
+  // Shown as the image itself when it names its file and project, see BacklogInline.
   ["sharedFileImage", fileChip],
 ]);
 
@@ -70,7 +73,7 @@ export const BacklogInline = Node.create({
   parseHTML() {
     return [
       {
-        tag: "span[data-backlog-inline]",
+        tag: "[data-backlog-inline]",
         getAttrs: (el) => ({ raw: el.getAttribute("data-backlog-inline") ?? "" }),
       },
     ];
@@ -80,6 +83,20 @@ export const BacklogInline = Node.create({
     const raw: string = node.attrs.raw;
     const name = /^\[([\w-]+)/.exec(raw)?.[1] ?? "";
     const { id, values } = parsePandocAttributes(raw.slice(name.length + 1, -1));
+    const image = name === "sharedFileImage" ? sharedFileRef(id, values) : undefined;
+    if (image) {
+      return [
+        "img",
+        {
+          "data-backlog-inline": raw,
+          src: assetUrl(image),
+          alt: values.alt || values.name || "",
+          title: values.name,
+          style: widthStyle(values.width),
+          class: "backlog-image",
+        },
+      ];
+    }
     const shortcode = { name, id, values };
     const { label, detail } = CHIPS.get(name)?.(shortcode) ?? defaultChip(shortcode);
     const attrs = {
