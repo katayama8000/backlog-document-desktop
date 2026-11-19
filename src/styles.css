@@ -1,15 +1,36 @@
 :root {
+  /* Backlog palette. Brand green is for surfaces (buttons, selection);
+     text on white uses the deeper green for contrast. */
+  --brand: #42ce9f;
+  --brand-strong: #007050;
+  --on-brand-strong: #ffffff;
   --bg: #ffffff;
-  --bg-sub: #f6f7f9;
-  --fg: #1f2328;
-  --muted: #6b6f76;
-  --border: #e3e5e8;
-  --accent: #2563eb;
-  --error: #d1242f;
-  --ok: #1a7f37;
-  --warn: #9a6700;
-  --del-bg: #ffebe9;
-  --add-bg: #dafbe1;
+  --bg-sub: #f5f5f7;
+  --fg: #1d1e2a;
+  --muted: #74758b;
+  --border: #e3e3e8;
+  --accent: #007050;
+  --info: #7a6abf;
+  --error: #cf1c1c;
+  --ok: #277d12;
+  --warn: #a46404;
+  --highlight: #ffe899;
+  --del-bg: #ffd6d6;
+  --add-bg: #d3eeb4;
+  /* Backlog's text markers (`text-fg-color-*` / `text-bg-color-*`). */
+  --marker-pink-text: #bf2261; --marker-pink-bg: #ffe0ed;
+  --marker-bordeaux-text: #a41d43; --marker-bordeaux-bg: #f3c9d5;
+  --marker-red-text: #b82314; --marker-red-bg: #fbddda;
+  --marker-beige-text: #90581d; --marker-beige-bg: #f4dfc8;
+  --marker-orange-text: #8a5200; --marker-orange-bg: #ffd899;
+  --marker-yellow-text: #7a5e00; --marker-yellow-bg: #ffe899;
+  --marker-lime-text: #466d18; --marker-lime-bg: #d4eeb4;
+  --marker-green-text: #007050; --marker-green-bg: #d0f1e7;
+  --marker-aqua-text: #106f8e; --marker-aqua-bg: #c8edf9;
+  --marker-blue-text: #1d58af; --marker-blue-bg: #dae7fb;
+  --marker-purple-text: #6240c9; --marker-purple-bg: #e5dff6;
+  --marker-magenta-text: #ad1fad; --marker-magenta-bg: #f9dcf9;
+  --marker-grey-text: #62637f; --marker-grey-bg: #e3e3e8;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
   font-size: 14px;
   color: var(--fg);
@@ -18,23 +39,41 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1e1f22;
-    --bg-sub: #26272b;
-    --fg: #e6e6e6;
-    --muted: #9a9ca3;
-    --border: #3a3c42;
-    --accent: #6ea8fe;
-    --error: #ff7b72;
-    --ok: #56d364;
-    --warn: #e3b341;
-    --del-bg: #4a1f1f;
-    --add-bg: #1f3a25;
+    --brand-strong: #2c9a7a;
+    --bg: #1d1e2a;
+    --bg-sub: #262735;
+    --fg: #e3e3e8;
+    --muted: #b4b5c6;
+    --border: #3b3c4b;
+    --accent: #42ce9f;
+    --info: #bbacf6;
+    --error: #ee8181;
+    --ok: #8acd7a;
+    --warn: #f1b756;
+    --highlight: #87855b;
+    --del-bg: #641616;
+    --add-bg: #253a0d;
+    --marker-pink-text: #eb98ba; --marker-pink-bg: #744656;
+    --marker-bordeaux-text: #d1758f; --marker-bordeaux-bg: #7e5866;
+    --marker-red-text: #eb8d84; --marker-red-bg: #8b5858;
+    --marker-beige-text: #d9ab78; --marker-beige-bg: #766a5e;
+    --marker-orange-text: #e8a840; --marker-orange-bg: #7c674c;
+    --marker-yellow-text: #e9c85d; --marker-yellow-bg: #87855b;
+    --marker-lime-text: #94c954; --marker-lime-bg: #525d41;
+    --marker-green-text: #62bca2; --marker-green-bg: #476147;
+    --marker-aqua-text: #78c1d9; --marker-aqua-bg: #275469;
+    --marker-blue-text: #77aff8; --marker-blue-bg: #4e528c;
+    --marker-purple-text: #b4a5f3; --marker-purple-bg: #483c7f;
+    --marker-magenta-text: #e58ae5; --marker-magenta-bg: #644d69;
+    --marker-grey-text: #b4b5c6; --marker-grey-bg: #6a6b79;
   }
 }
 
 * { box-sizing: border-box; }
 body { margin: 0; }
 h1 { font-size: 20px; margin: 0 0 8px; }
+
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 
 button, input, select {
   font: inherit;
@@ -46,7 +85,7 @@ button, input, select {
 }
 button { cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--brand-strong); border-color: var(--brand-strong); color: var(--on-brand-strong); font-weight: 600; }
 button.link { border: none; background: none; color: var(--accent); padding: 0; }
 
 .center { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 16px; }
@@ -93,7 +132,7 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 /* Tree */
 .tree { overflow-y: auto; flex: 1; }
 .tree-item { display: flex; align-items: center; border-radius: 6px; }
-.tree-item.selected { background: var(--border); }
+.tree-item.selected { background: color-mix(in srgb, var(--brand) 18%, var(--bg-sub)); box-shadow: inset 3px 0 0 var(--brand); }
 .tree-item button { border: none; background: none; padding: 4px; text-align: left; }
 .tree-item .toggle { width: 20px; color: var(--muted); flex: none; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

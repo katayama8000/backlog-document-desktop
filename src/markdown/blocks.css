@@ -46,7 +46,7 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--tone) 10%, var(--bg));
 }
-.editor .tiptap .callout-info { --tone: var(--accent); }
+.editor .tiptap .callout-info { --tone: var(--info); }
 .editor .tiptap .callout-warning { --tone: var(--warn); }
 .editor .tiptap .callout-success { --tone: var(--ok); }
 .editor .tiptap .callout-error { --tone: var(--error); }

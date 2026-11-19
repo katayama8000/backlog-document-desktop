@@ -47,7 +47,7 @@ const cases: Case[] = [
   {
     name: "markWithClass palette",
     src: '[g]{.markWithClass className="text-fg-color-grey text-bg-color-yellow"}',
-    html: (h) => /style="color: rgb\([^"]+\); background-color: rgb\([^"]+\)"/.test(h),
+    html: (h) => h.includes('style="color: var(--marker-grey-text); background-color: var(--marker-yellow-bg)"'),
   },
   { name: "markWithClass unknown class", src: '[g]{.markWithClass className="text-fg-color-constructor foo"}', html: (h) => !h.includes("style=") },
   { name: "markWithUser", src: '[m]{.markWithUser userId="123"}', html: (h) => h.includes('class="backlog-user-mark"') },
