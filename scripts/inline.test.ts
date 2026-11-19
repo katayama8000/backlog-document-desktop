@@ -2,7 +2,39 @@
 // the viewer's HTML. Run: pnpm test
 import { run, type Case } from "./harness.ts";
 
+/** The text a reader sees, without tags. */
+const visible = (html: string) => html.replace(/<[^>]+>/g, "");
+
 const cases: Case[] = [
+  // ── `++underline++` and `==highlight==` ──
+  { name: "underline delimiters", src: "a ++u++ b", html: (h) => h.includes("<u>u</u>") },
+  { name: "highlight delimiters", src: "a ==h== b", html: (h) => h.includes("<mark>h</mark>") },
+  { name: "underline before punctuation", src: "x ++u++, y", html: (h) => h.includes("<u>u</u>") },
+  { name: "underline in highlight", src: "++==h==++", html: (h) => h.includes("<u><mark>h</mark></u>") },
+  { name: "highlight in bold", src: "**==h==**", html: (h) => h.includes("<strong><mark>h</mark></strong>") },
+  { name: "++ touching letters stays text", src: "C++ and x++y++z and ++u++x", html: (h) => !h.includes("<u>") },
+  { name: "++ touching non-ASCII letters stays text", src: "あ++い++う", html: (h) => !h.includes("<u>") },
+  { name: "== around spaces stays text", src: "a == b == c", html: (h) => !h.includes("<mark>") },
+  {
+    name: "highlight around code holding ==",
+    src: "==a `b==c` d==",
+    html: (h) => h.includes("<code><mark>b==c</mark></code>") && h.includes("<mark> d</mark>"),
+  },
+  {
+    name: "highlight around span and link holding ==",
+    src: '==see [a==b]{.textStyle color="red"} and [c==d](https://x/?q=a==) too==',
+    html: (h) => h.includes("<mark>a==b</mark>") && h.includes("<mark>c==d</mark>") && h.includes("<mark> too</mark>"),
+  },
+
+  // ── Escaped literals ──
+  { name: "escaped underline literal", src: String.raw`a \++x\++ b`, html: (h) => visible(h) === "a ++x++ b" && !h.includes("<u>") },
+  { name: "escaped highlight literal", src: String.raw`a \==x\== b`, html: (h) => visible(h) === "a ==x== b" && !h.includes("<mark>") },
+  { name: "escaped literal in span", src: String.raw`[a \== b]{.textStyle color="red"}`, html: (h) => visible(h) === "a == b" },
+  { name: "escaped literal in bold", src: String.raw`**\==x\==**`, html: (h) => visible(h) === "==x==" && h.includes("<strong>") },
+  { name: "escaped literal in highlight", src: String.raw`==a \== b==`, html: (h) => visible(h) === "a == b" && h.includes("<mark>a </mark>") },
+  { name: "adjacent escaped literals", src: String.raw`\==\=== and \==\++`, html: (h) => visible(h) === "===== and ==++" },
+  { name: "escaped backslash before highlight", src: String.raw`a\\==x==`, html: (h) => visible(h) === "a\\x" && h.includes("<mark>x</mark>") },
+
   // ── Pandoc spans ──
   { name: "underline span", src: "[u]{.underline}", html: (h) => h.includes('class="backlog-underline"') },
   {

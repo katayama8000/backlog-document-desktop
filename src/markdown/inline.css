@@ -11,8 +11,10 @@
 .editor .tiptap .backlog-chip-detail { margin-left: 6px; color: var(--muted); }
 .editor .tiptap .backlog-inlineMath { font-family: ui-monospace, Menlo, monospace; }
 
-/* A span's own `color` arrives as an inline style and wins over the default. */
+/* `++u++`, `==h==` and the matching `.underline` / `.highlight` spans.
+   A span's own `color` arrives as an inline style and wins over the default. */
 .editor .tiptap .backlog-underline { text-decoration: underline; }
+.editor .tiptap mark,
 .editor .tiptap .backlog-highlight { background-color: rgb(234 179 8 / 0.35); color: inherit; }
 
 .editor .tiptap .backlog-user-mark { border-bottom: 1px dashed var(--muted); }
