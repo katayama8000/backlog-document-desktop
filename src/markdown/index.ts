@@ -11,6 +11,7 @@ import { HeadingAttributes } from "./heading.ts";
 import { BacklogImage } from "./image.ts";
 import { BacklogInline, PandocSpan } from "./inline.ts";
 import { BacklogListItem, BacklogTaskItem } from "./lists.ts";
+import { BacklogHighlight, BacklogUnderline, DelimiterEscape } from "./marks.ts";
 import {
   BacklogHardBreak,
   BacklogLink,
@@ -21,7 +22,7 @@ import {
 } from "./overrides.ts";
 
 export const backlogExtensions = [
-  StarterKit.configure({ listItem: false, paragraph: false, hardBreak: false, link: false }),
+  StarterKit.configure({ listItem: false, paragraph: false, hardBreak: false, link: false, underline: false }),
   BacklogParagraph,
   BacklogHardBreak,
   HtmlBreakParser,
@@ -35,6 +36,9 @@ export const backlogExtensions = [
   HeadingAttributes,
   BacklogInline,
   PandocSpan,
+  BacklogUnderline,
+  BacklogHighlight,
+  DelimiterEscape,
   FencedDiv,
   FencedAtom,
   BacklogImage,
