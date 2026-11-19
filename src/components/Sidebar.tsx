@@ -8,15 +8,17 @@ import type { TreeNode } from "../bindings/TreeNode";
 
 type Props = {
   settings: Settings;
+  /** The selected project's tree, kept by the app so the viewer can read it too. */
+  tree: Fetched<DocumentTree> | null;
+  onTreeChange: (tree: Fetched<DocumentTree> | null) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
 };
 
-export function Sidebar({ settings, selectedId, onSelect, onOpenSettings }: Props) {
+export function Sidebar({ settings, tree, onTreeChange, selectedId, onSelect, onOpenSettings }: Props) {
   const [projects, setProjects] = useState<Fetched<Project[]> | null>(null);
   const [projectKey, setProjectKey] = useState(settings.projectKey ?? "");
-  const [tree, setTree] = useState<Fetched<DocumentTree> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
 
@@ -29,9 +31,9 @@ export function Sidebar({ settings, selectedId, onSelect, onOpenSettings }: Prop
     setError(null);
     api
       .getTree(key)
-      .then(setTree)
+      .then(onTreeChange)
       .catch((e) => {
-        setTree(null);
+        onTreeChange(null);
         setError(errorMessage(e));
       })
       .finally(() => setLoadingTree(false));

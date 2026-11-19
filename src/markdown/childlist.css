@@ -1,0 +1,13 @@
+/* Child page lists; the list is added by the editor, see childlist.ts. */
+.editor .tiptap .childlist {
+  margin: 12px 0;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sub);
+}
+.editor .tiptap .childlist-title { margin: 0 0 4px; font-weight: 600; }
+.editor .tiptap .childlist-list ul { margin: 0; padding-left: 20px; }
+.editor .tiptap .childlist-list a { color: var(--accent); text-decoration: none; }
+.editor .tiptap .childlist-list a:hover { text-decoration: underline; }
+.editor .tiptap .childlist-empty { margin: 0; color: var(--muted); }

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "./api";
+import type { DocumentTree } from "./bindings/DocumentTree";
+import type { Fetched } from "./bindings/Fetched";
 import type { Settings } from "./bindings/Settings";
 import { DocumentViewer } from "./components/DocumentViewer";
 import { SettingsForm } from "./components/SettingsForm";
@@ -14,6 +16,7 @@ type Screen =
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "loading" });
   const [documentId, setDocumentId] = useState<string | null>(null);
+  const [tree, setTree] = useState<Fetched<DocumentTree> | null>(null);
 
   const reload = () =>
     api
@@ -42,6 +45,7 @@ export default function App() {
           initialSpaceUrl={screen.settings?.spaceUrl ?? ""}
           onConnected={() => {
             setDocumentId(null);
+            setTree(null);
             reload();
           }}
           onCancel={
@@ -56,6 +60,8 @@ export default function App() {
         <div className="layout">
           <Sidebar
             settings={screen.settings}
+            tree={tree}
+            onTreeChange={setTree}
             selectedId={documentId}
             onSelect={setDocumentId}
             onOpenSettings={() =>
@@ -64,7 +70,12 @@ export default function App() {
           />
           <main className="content">
             {documentId ? (
-              <DocumentViewer key={documentId} documentId={documentId} />
+              <DocumentViewer
+                key={documentId}
+                documentId={documentId}
+                tree={tree?.data.activeTree ?? null}
+                onOpen={setDocumentId}
+              />
             ) : (
               <div className="center muted">Select a document</div>
             )}

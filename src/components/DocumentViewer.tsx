@@ -4,14 +4,24 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { DocumentView } from "../bindings/DocumentView";
 import type { Fetched } from "../bindings/Fetched";
+import type { TreeNode } from "../bindings/TreeNode";
 import { lineDiff } from "../lineDiff";
 import { backlogExtensions } from "../markdown";
 import "../markdown/blocks.css";
+import { childPages, showChildPages } from "../markdown/childlist";
+import "../markdown/childlist.css";
 import "../markdown/image.css";
 import "../markdown/inline.css";
 import { formatTime } from "./Sidebar";
 
-export function DocumentViewer({ documentId }: { documentId: string }) {
+type Props = {
+  documentId: string;
+  /** The project's document tree, once loaded; childlist blocks list the document's children from it. */
+  tree: TreeNode | null;
+  onOpen: (id: string) => void;
+};
+
+export function DocumentViewer({ documentId, tree, onOpen }: Props) {
   const [doc, setDoc] = useState<Fetched<DocumentView> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [roundTrip, setRoundTrip] = useState<string | null>(null);
@@ -24,6 +34,11 @@ export function DocumentViewer({ documentId }: { documentId: string }) {
   useEffect(() => {
     api.getDocument(documentId).then(setDoc).catch((e) => setError(errorMessage(e)));
   }, [documentId]);
+
+  useEffect(() => {
+    if (!editor) return;
+    showChildPages(editor.view, { pages: tree ? childPages(tree, documentId) : undefined, open: onOpen });
+  }, [editor, tree, documentId, onOpen]);
 
   useEffect(() => {
     if (!editor || !doc) return;
