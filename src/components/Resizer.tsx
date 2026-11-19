@@ -1,5 +1,16 @@
+import { getCurrentWindow, type CursorIcon } from "@tauri-apps/api/window";
 import { useRef } from "react";
 import { SIDEBAR_WIDTH, clampWidth } from "../sidebarWidth";
+
+/**
+ * On macOS the native window resets the cursor to the arrow shortly after
+ * WebKit applies the CSS one, so the resize cursor only flashes. Setting it
+ * on the window keeps it while the pointer is on (or dragging) the handle.
+ */
+function setWindowCursor(icon: CursorIcon) {
+  if (!("__TAURI_INTERNALS__" in window)) return;
+  getCurrentWindow().setCursorIcon(icon).catch(() => {});
+}
 
 type Props = { width: number; onChange: (width: number) => void; onCommit: (width: number) => void };
 
@@ -24,6 +35,10 @@ export function Resizer({ width, onChange, onCommit }: Props) {
       aria-valuenow={width}
       tabIndex={0}
       title="Drag to resize. Double-click to reset."
+      onPointerEnter={() => setWindowCursor("colResize")}
+      onPointerLeave={() => {
+        if (!drag.current) setWindowCursor("default");
+      }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         drag.current = { startX: e.clientX, startWidth: width, last: width };
@@ -32,10 +47,11 @@ export function Resizer({ width, onChange, onCommit }: Props) {
       onPointerMove={(e) => {
         if (drag.current) drag.current.last = set(drag.current.startWidth + e.clientX - drag.current.startX);
       }}
-      onPointerUp={() => {
+      onPointerUp={(e) => {
         if (drag.current) onCommit(drag.current.last);
         drag.current = null;
         document.body.classList.remove("resizing");
+        if (document.elementFromPoint(e.clientX, e.clientY) !== e.currentTarget) setWindowCursor("default");
       }}
       onDoubleClick={() => onCommit(set(SIDEBAR_WIDTH.initial))}
       onKeyDown={(e) => {
