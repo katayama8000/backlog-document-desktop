@@ -20,6 +20,8 @@
 
 /* Link previews. */
 .editor .tiptap .ogp-title { font-weight: 600; overflow-wrap: anywhere; }
+.editor .tiptap a.ogp-title { color: var(--accent); text-decoration: none; }
+.editor .tiptap a.ogp-title:hover { text-decoration: underline; }
 .editor .tiptap .ogp-description {
   display: -webkit-box;
   -webkit-box-orient: vertical;
