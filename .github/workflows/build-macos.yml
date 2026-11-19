@@ -1,0 +1,91 @@
+name: Build macOS app
+
+on:
+  # Publishing a release (create it in the Releases UI with a new v* tag and
+  # "Generate release notes") builds the app and attaches the .dmg to it.
+  release:
+    types: [published]
+  push:
+    branches: [main]
+  pull_request:
+    paths: [".github/workflows/build-macos.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: pnpm install --frozen-lockfile
+
+      # For a release, the version comes from the tag (v0.2.0 -> 0.2.0), so the
+      # version files don't need a commit before releasing. Only vX.Y.Z is
+      # accepted: macOS bundle versions are numbers separated by dots.
+      - name: Set the version from the release tag
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Tag '$TAG' must look like v1.2.3" >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          jq --arg v "$version" '.version = $v' src-tauri/tauri.conf.json > tauri.conf.json.tmp
+          mv tauri.conf.json.tmp src-tauri/tauri.conf.json
+          # [workspace.package] version, used by every crate (e.g. the API User-Agent)
+          sed -i '' -E "/^\[workspace\.package\]/,/^\[/ s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+          grep -n '^version' Cargo.toml
+
+      # Universal app (Apple Silicon + Intel), ad-hoc signed (see tauri.conf.json).
+      - uses: tauri-apps/tauri-action@v0
+        with:
+          args: --target universal-apple-darwin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backlog-document-desktop-macos
+          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # Only this job can write to the repository, and it runs no project code.
+  attach-to-release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: backlog-document-desktop-macos
+          path: dmg
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dmg/*.dmg --clobber --repo "$GITHUB_REPOSITORY"
