@@ -34,7 +34,16 @@ Every push to `main` also builds the app. Download the `.dmg` from that run's **
 
 ## Unsigned builds
 
-The app is not code-signed or notarized yet. On first launch macOS says it can't verify the developer. Right-click the app and choose **Open**, or allow it in System Settings → Privacy & Security. Signing needs an Apple Developer ID; the certificate and notarization credentials would go in repository secrets and be passed to `tauri-action`.
+The app is only ad-hoc signed (no Developer ID) and not notarized, so macOS blocks it on first launch after a download:
+
+- **"can't verify the developer" / "could not verify":** try to open the app once, then go to System Settings → Privacy & Security and click **Open Anyway**. (On older macOS, right-click the app and choose **Open** also works.)
+- **"is damaged and can't be opened":** remove the download quarantine flag, then open it normally:
+
+  ```sh
+  xattr -dr com.apple.quarantine "/Applications/Backlog Document Desktop.app"
+  ```
+
+Signing needs an Apple Developer ID; the certificate and notarization credentials would go in repository secrets and be passed to `tauri-action`.
 
 ## If something goes wrong
 
