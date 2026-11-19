@@ -137,7 +137,7 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 /* Tree */
 .tree { overflow-y: auto; flex: 1; }
 .tree-item { display: flex; align-items: center; border-radius: 6px; }
-.tree-item.selected { background: var(--brand-tint); box-shadow: inset 3px 0 0 var(--brand); }
+.tree-item.selected { background: var(--brand-tint); }
 .tree-item button { border: none; background: none; padding: 4px; text-align: left; }
 .tree-item .toggle { width: 20px; color: var(--muted); flex: none; }
 .tree-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
