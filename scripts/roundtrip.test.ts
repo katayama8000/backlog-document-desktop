@@ -1,22 +1,10 @@
 // Markdown round-trip check for the Backlog extensions (issue #1).
 // Run: node scripts/roundtrip.test.ts
 import { getSchema } from "@tiptap/core";
-import { TaskList } from "@tiptap/extension-list";
-import { TableKit } from "@tiptap/extension-table";
 import { MarkdownManager } from "@tiptap/markdown";
 import { Node as PMNode } from "@tiptap/pm/model";
-import StarterKit from "@tiptap/starter-kit";
-import { BacklogListItem, BacklogMarkdown, BacklogTaskItem } from "../src/markdown/backlog.ts";
+import { backlogExtensions as extensions } from "../src/markdown/index.ts";
 
-// Keep in sync with DocumentViewer.
-const extensions = [
-  StarterKit.configure({ listItem: false }),
-  BacklogListItem,
-  TableKit,
-  TaskList,
-  BacklogTaskItem,
-  ...BacklogMarkdown,
-];
 const schema = getSchema(extensions);
 const md = new MarkdownManager({ extensions });
 
@@ -50,6 +38,27 @@ const cases: { name: string; src: string; expect?: (json: any) => boolean; sameA
   { name: "embed atom", src: ':::youtube {src="https://www.youtube.com/watch?v=x" start="30"} :::\n\nafter', expect: (j) => j.content[0].type === "fencedAtom" },
   { name: "embed atom without attrs", src: ":::figma :::" },
   { name: "embed atom inside div", src: ':::callout {type="info"}\n\n:::video {src="a.mp4" width="100%"} :::\n\nbody\n\n:::', expect: (j) => j.content[0].content[0].type === "fencedAtom" },
+  // Text-level forms that appear in Backlog's `plain`.
+  { name: "consecutive <br>", src: "A<br><br>B", expect: (j) => j.content[0].content[1].type === "hardBreak" },
+  { name: "single hard break", src: "A  \nB" },
+  { name: "<br> in task item", src: "- [ ] a<br>b" },
+  { name: "<br> in table cell", src: "| a | b |\n| --- | --- |\n| p1<br><br>p2 | 2 |" },
+  { name: "paragraph of only <br>", src: "a\n\n<br>\n\nb", expect: (j) => j.content[1].type === "paragraph" && j.content[1].content[0].type === "hardBreak" },
+  { name: "literal <br> text", src: "&lt;br&gt; is a tag" },
+  { name: "wide space at line start", src: "&#12288;indented", expect: (j) => j.content[0].content[0].text === "　indented" },
+  { name: "wide space in list", src: "- a\n  - &#12288;tauri" },
+  { name: "nbsp at line end", src: "end&#160;" },
+  { name: "escaped ordered marker", src: "1\\. not a list", expect: (j) => j.content[0].type === "paragraph" },
+  { name: "escaped bullet and heading", src: "\\- not a bullet\n\n\\# not a heading" },
+  { name: "escaped marker after break", src: "a  \n1\\. b" },
+  { name: "list-break between lists", src: "- a\n\n[//]: # (list-break)\n\n- b", expect: (j) => j.content.length === 3 },
+  { name: "empty paragraphs", src: "A\n\n\n\nB" },
+  { name: "pipe table", src: "| a | b |\n| --- | --- |\n| 1 | 2 |", expect: (j) => j.content[0].type === "table" },
+  { name: "table with empty and escaped cells", src: "| a | b \\| c |\n| --- | --- |\n|  | 2 |" },
+  { name: "image with attrs", src: '![alt](https://x/a.png){width="846" height="318" textAlign="left"}', expect: (j) => j.content[0].content[0].type === "backlogImage" },
+  { name: "image with title, no alt", src: '![](</a b.png> "t"){width="100%" height="auto"}' },
+  { name: "link with attrs", src: '[t](https://x){.c-link target="_self"}', expect: (j) => j.content[0].content[0].marks[0].attrs.pandocAttrs === '.c-link target="_self"' },
+  { name: "link > span > bold", src: '[[**Qiita**]{.textStyle color="" backgroundColor=""}](https://qiita.com/x){.source-chip rel="noreferrer"}' },
   { name: "fenced div", src: ":::paragraph {}\nhello\n:::", expect: (j) => j.content[0].type === "fencedDiv" && j.content[0].content[0].type === "paragraph" },
   { name: "fenced div padded", src: ':::paragraph {textAlign="center"}\n\nhello\n\n:::' },
   { name: "empty fenced div", src: ":::paragraph {}\n:::" },

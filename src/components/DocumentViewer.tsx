@@ -1,14 +1,11 @@
 import { Markdown } from "@tiptap/markdown";
-import { TaskList } from "@tiptap/extension-list";
-import { TableKit } from "@tiptap/extension-table";
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { DocumentView } from "../bindings/DocumentView";
 import type { Fetched } from "../bindings/Fetched";
 import { lineDiff } from "../lineDiff";
-import { BacklogListItem, BacklogMarkdown, BacklogTaskItem } from "../markdown/backlog";
+import { backlogExtensions } from "../markdown";
 import { formatTime } from "./Sidebar";
 
 export function DocumentViewer({ documentId }: { documentId: string }) {
@@ -17,15 +14,7 @@ export function DocumentViewer({ documentId }: { documentId: string }) {
   const [roundTrip, setRoundTrip] = useState<string | null>(null);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ listItem: false }),
-      BacklogListItem,
-      TableKit,
-      TaskList,
-      BacklogTaskItem,
-      ...BacklogMarkdown,
-      Markdown,
-    ],
+    extensions: [...backlogExtensions, Markdown],
     editable: false,
   });
 
