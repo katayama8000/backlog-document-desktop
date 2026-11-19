@@ -7,19 +7,12 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-set-cursor-icon",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        {
-          "url": "https://*"
-        },
-        {
-          "url": "http://*"
-        },
-        {
-          "url": "mailto:*"
-        }
+        { "url": "https://*" },
+        { "url": "http://*" },
+        { "url": "mailto:*" }
       ]
     }
   ]
