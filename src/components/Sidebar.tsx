@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { useConnection } from "../connection";
 import type { DocumentTree } from "../bindings/DocumentTree";
 import type { Fetched } from "../bindings/Fetched";
 import type { Project } from "../bindings/Project";
@@ -56,6 +57,7 @@ export function Sidebar({ settings, tree, onTreeChange, selectedId, onSelect, on
         <span className="space" title={settings.spaceUrl ?? ""}>
           {settings.spaceUrl?.replace("https://", "")}
         </span>
+        <ConnectionPill />
         <button className="link" onClick={onOpenSettings}>
           Settings
         </button>
@@ -140,4 +142,18 @@ function TreeItem({
 
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleString();
+}
+
+function ConnectionPill() {
+  const connection = useConnection();
+  const online = connection === "online";
+  return (
+    <span
+      className={`connection connection-${connection}`}
+      title={online ? "Connected to Backlog" : "Cannot reach Backlog. Showing cached data."}
+      role="status"
+    >
+      {online ? "Online" : "Offline"}
+    </span>
+  );
 }
