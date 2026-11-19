@@ -21,6 +21,42 @@ Planned:
 - Conflict-aware sync: the latest remote version is fetched and merged before publishing (conflict copies first, then three-way merge)
 - OAuth 2.0 sign-in (API key for now)
 
+## Install (macOS)
+
+Requires macOS on Apple Silicon or Intel. The app is not notarized by Apple, so how you download it matters.
+
+### With the terminal (no warning)
+
+```sh
+# Find the .dmg of the latest release and download it
+URL=$(curl -fsSL https://api.github.com/repos/katayama8000/backlog-document-desktop/releases/latest \
+  | grep -o '"browser_download_url": *"[^"]*\.dmg"' | cut -d'"' -f4)
+curl -fsSL -o /tmp/bdd.dmg "$URL"
+
+# Mount it, copy the app to /Applications, and clean up
+MNT=$(hdiutil attach -nobrowse -readonly /tmp/bdd.dmg | awk -F'\t' '/\/Volumes\//{print $NF}')
+cp -R "$MNT/Backlog Document Desktop.app" /Applications/
+hdiutil detach -quiet "$MNT" && rm /tmp/bdd.dmg
+
+open "/Applications/Backlog Document Desktop.app"
+```
+
+Browsers mark downloaded files with a quarantine flag (`com.apple.quarantine`), and Gatekeeper checks flagged apps on first launch. `curl` doesn't set the flag, so the app opens without a warning. This skips Gatekeeper's check, so only do it for a source you trust. To update, run the same commands again.
+
+### With a browser
+
+Download the `.dmg` from [Releases](https://github.com/katayama8000/backlog-document-desktop/releases/latest) and drag the app to Applications. On first launch macOS says it could not verify the app:
+
+1. Close the dialog.
+2. Open System Settings → Privacy & Security, scroll to the bottom, and click **Open Anyway** next to the app. (It appears only shortly after a blocked launch.)
+3. Confirm and enter your password.
+
+Or remove the flag in the terminal: `xattr -dr com.apple.quarantine "/Applications/Backlog Document Desktop.app"`.
+
+### First launch
+
+Enter your space URL (e.g. `https://your-space.backlog.com`) and an API key from Backlog (Personal settings → API). The key is stored in the macOS Keychain; macOS may ask for your password the first time the app reads it.
+
 ## Tech stack
 
 - [Tauri 2](https://tauri.app/)
