@@ -210,6 +210,14 @@ CREATE TABLE cache (
   fetched_at TEXT NOT NULL
 );
 
+-- Backlog に保存されたファイル（添付画像、共有ファイルの画像）。オフライン閲覧用
+CREATE TABLE assets (
+  key          TEXT PRIMARY KEY,   -- 'attachment/{documentId}/{attachmentId}' / 'shared-file/{projectKey}/{fileId}'
+  content_type TEXT NOT NULL,
+  bytes        BLOB NOT NULL,
+  fetched_at   TEXT NOT NULL
+);
+
 CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL          -- スペースの URL、対象プロジェクトなど。秘密情報は入れない

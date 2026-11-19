@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use backlog_api::FileContent;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -18,6 +19,14 @@ CREATE TABLE IF NOT EXISTS cache (
   key        TEXT PRIMARY KEY,
   json       TEXT NOT NULL,
   fetched_at TEXT NOT NULL
+);
+
+-- Files stored in Backlog (attached and shared-file images) for offline viewing
+CREATE TABLE IF NOT EXISTS assets (
+  key          TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL,
+  bytes        BLOB NOT NULL,
+  fetched_at   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -108,6 +117,7 @@ impl Store {
             "DELETE FROM conflict_copies;
              DELETE FROM documents;
              DELETE FROM cache;
+             DELETE FROM assets;
              DELETE FROM settings WHERE key = 'project_key';",
         )
     }
@@ -139,6 +149,36 @@ impl Store {
             .optional()?;
         row.map(|(json, at)| Ok((serde_json::from_str(&json)?, at)))
             .transpose()
+    }
+
+    /// Stores a downloaded file under `key`, replacing any earlier copy.
+    pub fn put_asset(&self, key: &str, file: &FileContent) -> rusqlite::Result<()> {
+        self.conn().execute(
+            &format!(
+                "INSERT INTO assets (key, content_type, bytes, fetched_at) VALUES (?1, ?2, ?3, {NOW})
+                 ON CONFLICT(key) DO UPDATE SET
+                   content_type = excluded.content_type,
+                   bytes = excluded.bytes,
+                   fetched_at = excluded.fetched_at"
+            ),
+            params![key, file.content_type, file.bytes],
+        )?;
+        Ok(())
+    }
+
+    pub fn asset(&self, key: &str) -> rusqlite::Result<Option<FileContent>> {
+        self.conn()
+            .query_row(
+                "SELECT content_type, bytes FROM assets WHERE key = ?1",
+                [key],
+                |r| {
+                    Ok(FileContent {
+                        content_type: r.get(0)?,
+                        bytes: r.get(1)?,
+                    })
+                },
+            )
+            .optional()
     }
 
     /// Saves a freshly fetched document as the new base. Local edits are kept.
@@ -231,6 +271,34 @@ mod tests {
         assert!(store.cache::<Vec<i32>>("missing").unwrap().is_none());
     }
 
+    fn file(content_type: &str, bytes: &[u8]) -> FileContent {
+        FileContent {
+            content_type: content_type.into(),
+            bytes: bytes.into(),
+        }
+    }
+
+    #[test]
+    fn asset_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.asset("attachment/d1/1").unwrap(), None);
+        let png = file("image/png", &[0x89, b'P', b'N', b'G', 0, 0xff]);
+        store.put_asset("attachment/d1/1", &png).unwrap();
+        assert_eq!(store.asset("attachment/d1/1").unwrap(), Some(png));
+        assert_eq!(store.asset("attachment/d1/2").unwrap(), None);
+    }
+
+    #[test]
+    fn put_asset_replaces_earlier_copy() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .put_asset("shared-file/PRJ/1", &file("image/png", b"old"))
+            .unwrap();
+        let new = file("image/jpeg", b"new");
+        store.put_asset("shared-file/PRJ/1", &new).unwrap();
+        assert_eq!(store.asset("shared-file/PRJ/1").unwrap(), Some(new));
+    }
+
     #[test]
     fn put_document_updates_base() {
         let store = Store::open_in_memory().unwrap();
@@ -252,6 +320,7 @@ mod tests {
             .unwrap();
         store.set_setting(PROJECT_KEY, "PROJ").unwrap();
         store.put_cache("k", &1).unwrap();
+        store.put_asset("a", &file("image/png", b"x")).unwrap();
         store
             .put_document(&doc("v1", "2026-01-01T00:00:00Z"))
             .unwrap();
@@ -259,6 +328,7 @@ mod tests {
         assert!(store.setting(SPACE_URL).unwrap().is_some());
         assert!(store.setting(PROJECT_KEY).unwrap().is_none());
         assert!(store.cache::<i32>("k").unwrap().is_none());
+        assert!(store.asset("a").unwrap().is_none());
         assert!(store.document("d1").unwrap().is_none());
     }
 }
