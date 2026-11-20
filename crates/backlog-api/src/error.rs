@@ -42,6 +42,13 @@ impl Error {
         matches!(self, Error::Network(_))
     }
 
+    /// True when Backlog does not know the endpoint at all ("Undefined resource"), as opposed
+    /// to an endpoint that exists but did not find the requested item ("No such document").
+    pub fn is_undefined_resource(&self) -> bool {
+        matches!(self, Error::Api { status: 404, errors }
+            if errors.iter().any(|e| e.message.starts_with("Undefined resource")))
+    }
+
     pub fn status(&self) -> Option<u16> {
         match self {
             Error::Api { status, .. } => Some(*status),
@@ -54,5 +61,30 @@ fn summary(errors: &[ApiErrorItem]) -> String {
     match errors.first() {
         Some(e) => e.message.clone(),
         None => "no error details".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn api(status: u16, message: &str) -> Error {
+        Error::Api {
+            status,
+            errors: vec![ApiErrorItem {
+                message: message.into(),
+                code: 6,
+                more_info: String::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn undefined_resource_is_told_apart_from_a_missing_item() {
+        assert!(
+            api(404, "Undefined resource. /api/v2/documents/x/content").is_undefined_resource()
+        );
+        assert!(!api(404, "No such document. (documentId:x)").is_undefined_resource());
+        assert!(!api(400, "Undefined resource.").is_undefined_resource());
     }
 }

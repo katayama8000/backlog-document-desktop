@@ -60,6 +60,10 @@ pub enum PublishOutcome {
 /// Publishes the local edits of a stored document. Fetching and sending happen back to back to
 /// keep the window for a lost update short (design §6.4). Whatever happens, the local edits stay
 /// in the store, are published, or become a conflict copy.
+/// Shown when the space does not offer the document update API yet. The editor wraps it as
+/// "Publishing failed: … Your edits are kept."
+pub const PUBLISH_UNAVAILABLE: &str = "This Backlog space doesn't support updating documents yet.";
+
 pub async fn publish(
     api: &impl DocumentApi,
     store: &Store,
@@ -106,6 +110,9 @@ pub async fn publish(
             // Backlog has no conditional update. A 409 says the document changed while it was
             // sent, so start over from the fetch.
             Err(e) if e.status() == Some(409) => continue,
+            Err(e) if e.is_undefined_resource() => {
+                return Err(CommandError::new(ErrorKind::Api, PUBLISH_UNAVAILABLE));
+            }
             Err(e) => return Err(e.into()),
         }
     }
@@ -143,6 +150,8 @@ mod tests {
         /// Saves the body but leaves `plain` stale, like a `markdownIsFallback` update.
         AcceptWithFallback,
         Fail(u16),
+        /// The space doesn't know the update endpoint ("Undefined resource").
+        Unavailable,
         /// Someone else saved this body first, then the update failed with 409.
         LoseRace(&'static str),
     }
@@ -204,6 +213,14 @@ mod tests {
                     })
                 }
                 Reply::Fail(status) => Err(api_error(status)),
+                Reply::Unavailable => Err(backlog_api::Error::Api {
+                    status: 404,
+                    errors: vec![backlog_api::ApiErrorItem {
+                        message: "Undefined resource. /api/v2/documents/d1/content".into(),
+                        code: 6,
+                        more_info: String::new(),
+                    }],
+                }),
                 Reply::LoseRace(theirs) => {
                     *remote = document(theirs, T2);
                     Err(api_error(409))
@@ -344,6 +361,19 @@ mod tests {
         assert_eq!(backlog.sent(), ["a b"]);
         let view = document_view(&store, "d1").unwrap();
         assert_eq!(view.local_plain.as_deref(), Some("a b"));
+    }
+
+    #[test]
+    fn unavailable_update_api_says_so_and_keeps_the_edits() {
+        let store = edited_store();
+        let backlog = FakeBacklog::new("a", T1).reply([Reply::Unavailable]);
+        let error = block_on(publish(&backlog, &store, "d1")).unwrap_err();
+        assert!(matches!(error.kind, ErrorKind::Api));
+        assert_eq!(error.message, PUBLISH_UNAVAILABLE);
+        assert_eq!(backlog.sent(), ["a b"], "no retry");
+        let view = document_view(&store, "d1").unwrap();
+        assert_eq!(view.local_plain.as_deref(), Some("a b"));
+        assert_eq!(view.state, SyncState::Edited);
     }
 
     #[test]
