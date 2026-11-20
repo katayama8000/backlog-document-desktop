@@ -1,0 +1,59 @@
+name: Checks
+
+# The checks from AGENTS.md, except `pnpm test:realdocs`, which needs the local
+# document cache.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@v2
+
+      # On Linux the Tauri crate links WebKitGTK (wry) and D-Bus (tao).
+      - name: Install Tauri system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libdbus-1-dev
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: cargo fmt --check
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+      # Also writes dist/, which the Tauri crate embeds at compile time.
+      - run: pnpm exec vite build
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+      # `cargo test` regenerates src/bindings/ (ts-rs). A diff here means the
+      # committed bindings are stale: run `cargo test --workspace` and commit them.
+      - name: Check that src/bindings is up to date
+        run: |
+          git add --intent-to-add src/bindings
+          git diff --exit-code -- src/bindings
