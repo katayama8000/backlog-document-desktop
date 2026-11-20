@@ -5,6 +5,7 @@ mod navigation;
 mod secrets;
 mod state;
 mod store;
+mod sync;
 
 use tauri::Manager;
 
@@ -32,6 +33,10 @@ pub fn run() {
             commands::select_project,
             commands::get_tree,
             commands::get_document,
+            commands::save_local,
+            commands::discard_local,
+            commands::publish_document,
+            commands::resolve_conflict,
         ])
         .run(context)
         .expect("error while running tauri application");

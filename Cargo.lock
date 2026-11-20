@@ -275,6 +275,7 @@ name = "backlog-document-desktop"
 version = "0.1.0"
 dependencies = [
  "backlog-api",
+ "doc-sync-engine",
  "keyring",
  "rusqlite",
  "serde",

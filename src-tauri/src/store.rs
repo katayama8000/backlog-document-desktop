@@ -7,6 +7,7 @@ use backlog_api::FileContent;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use ts_rs::TS;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS settings (
@@ -63,9 +64,32 @@ pub struct StoredDocument {
     pub id: String,
     pub project_id: i64,
     pub title: String,
+    /// The last body known to be on Backlog, which local edits start from.
     pub base_plain: Option<String>,
     pub base_updated: Option<String>,
+    /// Edits not yet published. `None` when the document matches the base.
+    pub local_plain: Option<String>,
+    /// Backlog could not regenerate the Markdown after this app's last update, so `base_plain`
+    /// may be stale. Cleared when a fetch returns a different body.
+    pub read_only: bool,
     pub fetched_at: String,
+}
+
+/// Local edits kept aside because Backlog changed while they were made (design §6.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConflictCopy {
+    #[ts(type = "number")]
+    pub id: i64,
+    /// The local edits that were not published.
+    pub local_plain: String,
+    /// The body on Backlog at that time, which became the new base.
+    pub remote_plain: String,
+    /// ISO 8601
+    pub remote_updated: String,
+    /// ISO 8601
+    pub created_at: String,
 }
 
 pub struct Store {
@@ -181,7 +205,8 @@ impl Store {
             .optional()
     }
 
-    /// Saves a freshly fetched document as the new base. Local edits are kept.
+    /// Saves a freshly fetched document. It becomes the new base only when there are no local
+    /// edits: those edits started from the old base, and publishing compares against it.
     pub fn put_document(&self, doc: &backlog_api::Document) -> rusqlite::Result<StoredDocument> {
         self.conn().execute(
             &format!(
@@ -190,9 +215,11 @@ impl Store {
                  ON CONFLICT(id) DO UPDATE SET
                    project_id = excluded.project_id,
                    title = excluded.title,
-                   base_plain = excluded.base_plain,
-                   base_updated = excluded.base_updated,
-                   fetched_at = excluded.fetched_at"
+                   fetched_at = excluded.fetched_at,
+                   base_plain = iif(local_plain IS NULL, excluded.base_plain, base_plain),
+                   base_updated = iif(local_plain IS NULL, excluded.base_updated, base_updated),
+                   read_only = iif(local_plain IS NULL AND base_plain IS NOT excluded.base_plain,
+                                   0, read_only)"
             ),
             params![doc.id, doc.project_id, doc.title, doc.plain, doc.updated],
         )?;
@@ -204,7 +231,8 @@ impl Store {
     pub fn document(&self, id: &str) -> rusqlite::Result<Option<StoredDocument>> {
         self.conn()
             .query_row(
-                "SELECT id, project_id, title, base_plain, base_updated, fetched_at
+                "SELECT id, project_id, title, base_plain, base_updated, local_plain, read_only,
+                        fetched_at
                  FROM documents WHERE id = ?1",
                 [id],
                 |r| {
@@ -214,12 +242,128 @@ impl Store {
                         title: r.get(2)?,
                         base_plain: r.get(3)?,
                         base_updated: r.get(4)?,
-                        fetched_at: r.get(5)?,
+                        local_plain: r.get(5)?,
+                        read_only: r.get(6)?,
+                        fetched_at: r.get(7)?,
                     })
                 },
             )
             .optional()
     }
+
+    /// Keeps `markdown` as the local edits. A body equal to the base clears them.
+    /// Returns false when the document is not stored.
+    pub fn save_local(&self, id: &str, markdown: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE documents SET local_plain = iif(coalesce(base_plain, '') = ?2, NULL, ?2)
+             WHERE id = ?1",
+            params![id, markdown],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn discard_local(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE documents SET local_plain = NULL WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    /// Makes `remote` the new base after a publish attempt that used the local body `sent`.
+    /// The local edits are cleared only if they are still `sent`, so edits saved meanwhile stay.
+    pub fn settle(
+        &self,
+        remote: &backlog_api::Document,
+        sent: &str,
+        read_only: bool,
+    ) -> rusqlite::Result<()> {
+        settle(&self.conn(), remote, sent, read_only)
+    }
+
+    /// Keeps the local body `sent` as a conflict copy and makes `remote` the new base.
+    pub fn record_conflict(
+        &self,
+        remote: &backlog_api::Document,
+        sent: &str,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            &format!(
+                "INSERT INTO conflict_copies
+                   (document_id, local_plain, remote_plain, remote_updated, created_at)
+                 VALUES (?1, ?2, ?3, ?4, {NOW})"
+            ),
+            params![
+                remote.id,
+                sent,
+                remote.plain.as_deref().unwrap_or_default(),
+                remote.updated
+            ],
+        )?;
+        settle(&tx, remote, sent, false)?;
+        tx.commit()
+    }
+
+    /// Unresolved conflict copies of a document, oldest first.
+    pub fn conflict_copies(&self, document_id: &str) -> rusqlite::Result<Vec<ConflictCopy>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, local_plain, remote_plain, remote_updated, created_at
+             FROM conflict_copies WHERE document_id = ?1 AND resolved_at IS NULL ORDER BY id",
+        )?;
+        let copies = stmt.query_map([document_id], |r| {
+            Ok(ConflictCopy {
+                id: r.get(0)?,
+                local_plain: r.get(1)?,
+                remote_plain: r.get(2)?,
+                remote_updated: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })?;
+        copies.collect()
+    }
+
+    pub fn resolve_conflict(&self, document_id: &str, copy_id: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            &format!(
+                "UPDATE conflict_copies SET resolved_at = {NOW}
+                 WHERE id = ?1 AND document_id = ?2 AND resolved_at IS NULL"
+            ),
+            params![copy_id, document_id],
+        )?;
+        Ok(())
+    }
+}
+
+fn settle(
+    conn: &Connection,
+    remote: &backlog_api::Document,
+    sent: &str,
+    read_only: bool,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        &format!(
+            "UPDATE documents SET
+               title = ?2,
+               base_plain = ?3,
+               base_updated = ?4,
+               read_only = ?5,
+               local_plain = iif(local_plain IS ?6, NULL, local_plain),
+               fetched_at = {NOW}
+             WHERE id = ?1"
+        ),
+        params![
+            remote.id,
+            remote.title,
+            remote.plain,
+            remote.updated,
+            read_only,
+            sent
+        ],
+    )?;
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -310,6 +454,95 @@ mod tests {
             .unwrap();
         assert_eq!(stored.base_plain.as_deref(), Some("v2"));
         assert_eq!(stored.base_updated.as_deref(), Some("2026-01-02T00:00:00Z"));
+    }
+
+    const T1: &str = "2026-01-01T00:00:00Z";
+    const T2: &str = "2026-01-02T00:00:00Z";
+
+    /// A store holding document `d1` with body `v1` at `T1`.
+    fn store_with_v1() -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.put_document(&doc("v1", T1)).unwrap();
+        store
+    }
+
+    fn stored(store: &Store) -> StoredDocument {
+        store.document("d1").unwrap().unwrap()
+    }
+
+    #[test]
+    fn put_document_keeps_base_while_edited() {
+        let store = store_with_v1();
+        store.save_local("d1", "mine").unwrap();
+        let mut renamed = doc("v2", T2);
+        renamed.title = "renamed".into();
+        let d = store.put_document(&renamed).unwrap();
+        assert_eq!(d.base_plain.as_deref(), Some("v1"));
+        assert_eq!(d.base_updated.as_deref(), Some(T1));
+        assert_eq!(d.local_plain.as_deref(), Some("mine"));
+        assert_eq!(d.title, "renamed");
+    }
+
+    #[test]
+    fn save_local_equal_to_base_clears_edits() {
+        let store = store_with_v1();
+        assert!(store.save_local("d1", "v1 edited").unwrap());
+        assert_eq!(stored(&store).local_plain.as_deref(), Some("v1 edited"));
+        store.save_local("d1", "v1").unwrap();
+        assert_eq!(stored(&store).local_plain, None);
+        assert!(!store.save_local("missing", "x").unwrap());
+    }
+
+    #[test]
+    fn discard_local_clears_edits() {
+        let store = store_with_v1();
+        store.save_local("d1", "mine").unwrap();
+        store.discard_local("d1").unwrap();
+        assert_eq!(stored(&store).local_plain, None);
+        assert_eq!(stored(&store).base_plain.as_deref(), Some("v1"));
+    }
+
+    #[test]
+    fn settle_clears_only_the_edits_that_were_sent() {
+        let store = store_with_v1();
+        store.save_local("d1", "sent").unwrap();
+        store.save_local("d1", "typed while publishing").unwrap();
+        store.settle(&doc("sent\n", T2), "sent", false).unwrap();
+        let d = stored(&store);
+        assert_eq!(d.base_plain.as_deref(), Some("sent\n"));
+        assert_eq!(d.base_updated.as_deref(), Some(T2));
+        assert_eq!(d.local_plain.as_deref(), Some("typed while publishing"));
+
+        store
+            .settle(&doc("typed\n", T2), "typed while publishing", false)
+            .unwrap();
+        assert_eq!(stored(&store).local_plain, None);
+    }
+
+    #[test]
+    fn record_conflict_keeps_a_copy_and_adopts_the_remote() {
+        let store = store_with_v1();
+        store.save_local("d1", "mine").unwrap();
+        store.record_conflict(&doc("theirs", T2), "mine").unwrap();
+        let d = stored(&store);
+        assert_eq!(d.base_plain.as_deref(), Some("theirs"));
+        assert_eq!(d.local_plain, None);
+        let copies = store.conflict_copies("d1").unwrap();
+        assert_eq!(copies.len(), 1);
+        assert_eq!(copies[0].local_plain, "mine");
+        assert_eq!(copies[0].remote_plain, "theirs");
+        assert_eq!(copies[0].remote_updated, T2);
+
+        store.resolve_conflict("d1", copies[0].id).unwrap();
+        assert!(store.conflict_copies("d1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn read_only_lasts_until_a_fetch_returns_a_different_body() {
+        let store = store_with_v1();
+        store.settle(&doc("v1", T2), "", true).unwrap();
+        assert!(store.put_document(&doc("v1", T2)).unwrap().read_only);
+        assert!(!store.put_document(&doc("v3", T2)).unwrap().read_only);
     }
 
     #[test]
