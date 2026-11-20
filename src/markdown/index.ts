@@ -22,7 +22,17 @@ import {
 } from "./overrides.ts";
 
 export const backlogExtensions = [
-  StarterKit.configure({ listItem: false, paragraph: false, hardBreak: false, link: false, underline: false }),
+  StarterKit.configure({
+    listItem: false,
+    paragraph: false,
+    hardBreak: false,
+    link: false,
+    underline: false,
+    // TrailingNode appends an empty paragraph when a document ends with a list, table,
+    // code block or fenced div. That paragraph becomes a trailing "\n\n" in the Markdown,
+    // so the round-trip check would make those documents read-only.
+    trailingNode: false,
+  }),
   BacklogParagraph,
   BacklogHardBreak,
   HtmlBreakParser,
