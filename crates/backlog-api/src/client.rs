@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
 use crate::error::ApiErrorBody;
-use crate::{Document, DocumentTree, Error, Project, SpaceUrl, User};
+use crate::{ContentUpdate, Document, DocumentTree, Error, Project, SpaceUrl, User};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Files can be much larger than JSON responses.
@@ -72,6 +72,23 @@ impl Client {
         self.get(&path, &[]).await
     }
 
+    /// `PATCH /api/v2/documents/:documentId/content` — replaces the whole body with `content`
+    /// (Markdown). Backlog normalizes it, so fetch the document again for the stored body.
+    pub async fn update_document_content(
+        &self,
+        document_id: &str,
+        content: &str,
+    ) -> Result<ContentUpdate, Error> {
+        let response = send(self.content_update_request(document_id, content)).await?;
+        response.json().await.map_err(Error::Decode)
+    }
+
+    fn content_update_request(&self, document_id: &str, content: &str) -> reqwest::RequestBuilder {
+        let path = format!("/api/v2/documents/{document_id}/content");
+        self.request(Method::PATCH, &path)
+            .form(&[("content", content)])
+    }
+
     /// `GET /api/v2/documents/:documentId/attachments/:attachmentId` — the file itself.
     pub async fn document_attachment(
         &self,
@@ -97,12 +114,12 @@ impl Client {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, Error> {
-        let response = send(self.request(path).query(query)).await?;
+        let response = send(self.request(Method::GET, path).query(query)).await?;
         response.json::<T>().await.map_err(Error::Decode)
     }
 
     async fn download(&self, path: &str) -> Result<FileContent, Error> {
-        let response = send(self.request(path).timeout(DOWNLOAD_TIMEOUT)).await?;
+        let response = send(self.request(Method::GET, path).timeout(DOWNLOAD_TIMEOUT)).await?;
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -116,9 +133,9 @@ impl Client {
         })
     }
 
-    fn request(&self, path: &str) -> reqwest::RequestBuilder {
+    fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
         self.http
-            .get(format!("{}{}", self.space_url, path))
+            .request(method, format!("{}{}", self.space_url, path))
             .query(&[("apiKey", self.api_key.as_str())])
     }
 }
@@ -144,5 +161,32 @@ impl Error {
     /// True for authentication failures (wrong or revoked API key).
     pub fn is_unauthorized(&self) -> bool {
         self.status() == Some(StatusCode::UNAUTHORIZED.as_u16())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_update_sends_the_body_as_a_form_field() {
+        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let request = client
+            .content_update_request("abc", "# T\n\na & b=c")
+            .build()
+            .unwrap();
+        assert_eq!(request.method(), Method::PATCH);
+        assert_eq!(request.url().path(), "/api/v2/documents/abc/content");
+        assert_eq!(
+            request.headers()[reqwest::header::CONTENT_TYPE],
+            "application/x-www-form-urlencoded"
+        );
+        let body = request.body().and_then(|b| b.as_bytes()).unwrap();
+        let fields: Vec<(String, String)> =
+            url::form_urlencoded::parse(body).into_owned().collect();
+        assert_eq!(
+            fields,
+            [("content".to_string(), "# T\n\na & b=c".to_string())]
+        );
     }
 }
