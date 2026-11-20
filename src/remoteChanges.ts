@@ -4,11 +4,11 @@ import type { DocumentSummary } from "./bindings/DocumentSummary";
 
 /** How many of the most recently updated documents each poll asks for. */
 export const POLL_COUNT = 5;
-export const POLL_INTERVAL_MS = 60_000;
+export const POLL_INTERVAL_MS = 30_000;
 /** After `429 Too Many Requests`, wait this long before polling again. */
 export const RATE_LIMITED_DELAY_MS = 5 * 60_000;
-/** Regaining focus polls at once, unless the last poll was this recent. */
-export const FOCUS_MIN_GAP_MS = 15_000;
+/** Coming back to the window polls at once, unless the last poll was this recent. */
+export const RETURN_MIN_GAP_MS = 10_000;
 
 export type PollResult = {
   /** Newest first, at most `POLL_COUNT`. */
