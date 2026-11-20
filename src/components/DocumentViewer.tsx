@@ -193,7 +193,7 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
         ))}
       </header>
       <EditorContent editor={editor} className="editor" />
-      {roundTrip !== null && <RoundTripReport original={roundTrip.original} roundTrip={roundTrip.output} />}
+      {import.meta.env.DEV && roundTrip !== null && <RoundTripReport original={roundTrip.original} roundTrip={roundTrip.output} />}
     </article>
   );
 }
@@ -252,7 +252,7 @@ function Diff({ lines }: { lines: DiffLine[] }) {
 
 /**
  * Does Markdown → TipTap → Markdown give back the text byte for byte (design.md §10)?
- * Editing is allowed only when it does.
+ * Editing is allowed only when it does. Shown in development builds only.
  */
 function RoundTripReport({ original, roundTrip }: { original: string; roundTrip: string }) {
   const diff = useMemo(() => lineDiff(original, roundTrip), [original, roundTrip]);
