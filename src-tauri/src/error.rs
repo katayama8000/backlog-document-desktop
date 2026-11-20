@@ -39,6 +39,13 @@ impl CommandError {
     pub fn not_configured() -> Self {
         Self::new(ErrorKind::NotConfigured, "connection settings are missing")
     }
+
+    pub fn not_stored() -> Self {
+        Self::new(
+            ErrorKind::InvalidInput,
+            "the document is not stored locally",
+        )
+    }
 }
 
 impl From<backlog_api::Error> for CommandError {
