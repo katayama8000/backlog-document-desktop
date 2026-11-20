@@ -28,7 +28,7 @@ const idle: EditorStatus = { readOnly: null, publishing: false, unsaved: false, 
 
 test("read-only when Backlog's Markdown is a fallback or the text doesn't round-trip", () => {
   assert.equal(readOnlyReason(doc(), true), null);
-  assert.match(readOnlyReason(doc(), false)!, /round-trip/);
+  assert.match(readOnlyReason(doc(), false)!, /cannot reproduce/);
   assert.match(readOnlyReason(doc({ readOnly: true }), true)!, /Check it in Backlog/);
 });
 

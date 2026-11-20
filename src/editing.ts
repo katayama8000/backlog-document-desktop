@@ -23,7 +23,7 @@ export function readOnlyReason(doc: DocumentView, roundTrips: boolean): string |
     return "Backlog could not regenerate this document's Markdown after the last publish, so the text here may be out of date. Check it in Backlog. Editing resumes when the text changes there.";
   }
   if (!roundTrips) {
-    return "Read-only: the editor cannot reproduce this document's Markdown exactly (see the round-trip check below).";
+    return "Read-only: the editor cannot reproduce this document's Markdown exactly, so publishing could change parts you did not edit.";
   }
   return null;
 }
