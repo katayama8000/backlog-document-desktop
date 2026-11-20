@@ -35,6 +35,7 @@ pub fn run() {
             commands::get_document,
             commands::save_local,
             commands::discard_local,
+            commands::create_document,
             commands::publish_document,
             commands::resolve_conflict,
         ])

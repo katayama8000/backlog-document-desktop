@@ -40,6 +40,7 @@ export type MockCommands = {
   select_project: { args: { projectKey: string }; result: null };
   get_tree: { args: { projectKey: string }; result: Fetched<DocumentTree> };
   get_document: { args: { documentId: string }; result: Fetched<DocumentView> };
+  create_document: { args: { projectId: bigint; title: string; parentId: string | null }; result: DocumentView };
   save_local: { args: { documentId: string; markdown: string }; result: DocumentView };
   discard_local: { args: { documentId: string }; result: null };
   publish_document: { args: { documentId: string }; result: PublishResult };
@@ -121,6 +122,22 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
   const stored = new Map<string, Stored>();
   const copies: StoredCopy[] = [];
   let nextCopyId = 1;
+  let nextDocumentId = 1;
+
+  /** `POST /api/v2/documents` with `addLast=true`. */
+  function createRemote(projectId: bigint, title: string, parentId: string | null): Document {
+    const tree = [...trees.values()].find((t) => t.projectId === projectId);
+    if (!tree) throw fail("api", `project ${projectId} not found`);
+    const find = (node: TreeNode): TreeNode | null =>
+      node.id === parentId ? node : node.children.map(find).find((n) => n !== null) ?? null;
+    const parent = parentId === null ? tree.activeTree : find(tree.activeTree);
+    if (!parent) throw fail("api", `document ${parentId} not found`);
+    const id = `new${nextDocumentId++}`;
+    const doc: Document = { id, projectId, title, plain: "", created: now(), updated: now() };
+    remote.set(id, doc);
+    parent.children.push({ id, name: title, children: [] });
+    return { ...doc };
+  }
 
   /** The API client exists once a space URL and an API key are set. */
   function requireClient(): void {
@@ -274,6 +291,13 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
         fromCache = true;
       }
       return { data: view(documentId), fromCache, fetchedAt: storedDocument(documentId).fetchedAt };
+    },
+    create_document: ({ projectId, title, parentId }) => {
+      const trimmed = title.trim();
+      if (!trimmed) throw fail("invalidInput", "enter a title");
+      const doc = backlog(() => createRemote(projectId, trimmed, parentId));
+      putDocument(doc);
+      return view(doc.id);
     },
     save_local: ({ documentId, markdown }) => {
       const doc = storedDocument(documentId);

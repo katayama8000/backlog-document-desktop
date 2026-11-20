@@ -201,6 +201,27 @@ pub async fn get_document(
     })
 }
 
+/// Creates an empty document on Backlog and stores it, so it opens like any fetched one.
+/// Needs Backlog: there are no offline drafts (design §2).
+#[tauri::command]
+pub async fn create_document(
+    state: State<'_, AppState>,
+    project_id: i64,
+    title: String,
+    parent_id: Option<String>,
+) -> CommandResult<DocumentView> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(CommandError::new(ErrorKind::InvalidInput, "enter a title"));
+    }
+    let client = state.client()?;
+    let doc = client
+        .create_document(project_id, title, parent_id.as_deref())
+        .await?;
+    state.store.put_document(&doc)?;
+    document_view(&state.store, &doc.id)
+}
+
 /// Keeps the editor's Markdown as the document's local edits.
 #[tauri::command]
 pub fn save_local(

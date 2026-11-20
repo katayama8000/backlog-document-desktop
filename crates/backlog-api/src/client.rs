@@ -89,6 +89,36 @@ impl Client {
             .form(&[("content", content)])
     }
 
+    /// `POST /api/v2/documents` — creates an empty document titled `title`, as the last child
+    /// of `parent_id`, or at the end of the top level when `parent_id` is `None`.
+    pub async fn create_document(
+        &self,
+        project_id: i64,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> Result<Document, Error> {
+        let response = send(self.create_document_request(project_id, title, parent_id)).await?;
+        response.json().await.map_err(Error::Decode)
+    }
+
+    fn create_document_request(
+        &self,
+        project_id: i64,
+        title: &str,
+        parent_id: Option<&str>,
+    ) -> reqwest::RequestBuilder {
+        let project_id = project_id.to_string();
+        let mut form = vec![
+            ("projectId", project_id.as_str()),
+            ("title", title),
+            ("addLast", "true"),
+        ];
+        if let Some(parent_id) = parent_id {
+            form.push(("parentId", parent_id));
+        }
+        self.request(Method::POST, "/api/v2/documents").form(&form)
+    }
+
     /// `GET /api/v2/documents/:documentId/attachments/:attachmentId` — the file itself.
     pub async fn document_attachment(
         &self,
@@ -167,6 +197,51 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn form_fields(request: &reqwest::Request) -> Vec<(String, String)> {
+        let body = request.body().and_then(|b| b.as_bytes()).unwrap();
+        url::form_urlencoded::parse(body).into_owned().collect()
+    }
+
+    fn pairs(fields: &[(&str, &str)]) -> Vec<(String, String)> {
+        fields
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn create_document_adds_a_child_at_the_end() {
+        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let request = client
+            .create_document_request(42, "Notes & ideas", Some("parent1"))
+            .build()
+            .unwrap();
+        assert_eq!(request.method(), Method::POST);
+        assert_eq!(request.url().path(), "/api/v2/documents");
+        assert_eq!(
+            form_fields(&request),
+            pairs(&[
+                ("projectId", "42"),
+                ("title", "Notes & ideas"),
+                ("addLast", "true"),
+                ("parentId", "parent1"),
+            ])
+        );
+    }
+
+    #[test]
+    fn create_document_without_a_parent_goes_to_the_top_level() {
+        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let request = client
+            .create_document_request(42, "Top", None)
+            .build()
+            .unwrap();
+        assert_eq!(
+            form_fields(&request),
+            pairs(&[("projectId", "42"), ("title", "Top"), ("addLast", "true")])
+        );
+    }
 
     #[test]
     fn content_update_sends_the_body_as_a_form_field() {

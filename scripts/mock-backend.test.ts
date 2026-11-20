@@ -167,3 +167,28 @@ test("every sample page round-trips, except the one meant to open read-only", ()
     assert.equal(roundTrip(src).out === src, page.id !== READ_ONLY_PAGE, page.id);
   }
 });
+
+test("create_document adds an empty document at the end of its parent, ready to edit", async () => {
+  const backend = createMockBackend(sampleSpace);
+  const key = sampleSpace.projects[0].project.projectKey;
+  const { data: tree } = await backend.invoke("get_tree", { projectKey: key });
+  const parent = tree.activeTree.children[0];
+  const created = await backend.invoke("create_document", { projectId: tree.projectId, title: "  Notes  ", parentId: parent.id });
+  assert.equal(created.title, "Notes");
+  assert.equal(created.plain, "");
+  assert.equal(created.state, "synced");
+  const after = (await backend.invoke("get_tree", { projectKey: key })).data;
+  assert.equal(after.activeTree.children[0].children.at(-1)?.id, created.id);
+  const top = await backend.invoke("create_document", { projectId: tree.projectId, title: "Top", parentId: null });
+  assert.equal((await backend.invoke("get_tree", { projectKey: key })).data.activeTree.children.at(-1)?.id, top.id);
+  const edited = await backend.invoke("save_local", { documentId: created.id, markdown: "hello" });
+  assert.equal(edited.state, "edited");
+});
+
+test("create_document needs a title and Backlog", async () => {
+  const backend = createMockBackend(sampleSpace);
+  const projectId = sampleSpace.projects[0].project.id;
+  await rejectsWith(backend.invoke("create_document", { projectId, title: "   ", parentId: null }), "invalidInput");
+  backend.setOffline(true);
+  await rejectsWith(backend.invoke("create_document", { projectId, title: "x", parentId: null }), "offline");
+});

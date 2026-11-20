@@ -39,6 +39,8 @@ export const api = {
     tracked(invoke<Fetched<DocumentTree>>("get_tree", { projectKey })),
   getDocument: (documentId: string) =>
     tracked(invoke<Fetched<DocumentView>>("get_document", { documentId })),
+  createDocument: (projectId: bigint, title: string, parentId: string | null) =>
+    tracked(invoke<DocumentView>("create_document", { projectId, title, parentId })),
   saveLocal: (documentId: string, markdown: string) =>
     invoke<DocumentView>("save_local", { documentId, markdown }),
   discardLocal: (documentId: string) => invoke<void>("discard_local", { documentId }),
