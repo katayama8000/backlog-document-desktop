@@ -5,6 +5,7 @@ import type { DocumentTree } from "./bindings/DocumentTree";
 import type { DocumentView } from "./bindings/DocumentView";
 import type { Fetched } from "./bindings/Fetched";
 import type { Project } from "./bindings/Project";
+import type { PublishResult } from "./bindings/PublishResult";
 import type { Settings } from "./bindings/Settings";
 import type { User } from "./bindings/User";
 import { reportOutcome } from "./connection";
@@ -38,6 +39,13 @@ export const api = {
     tracked(invoke<Fetched<DocumentTree>>("get_tree", { projectKey })),
   getDocument: (documentId: string) =>
     tracked(invoke<Fetched<DocumentView>>("get_document", { documentId })),
+  saveLocal: (documentId: string, markdown: string) =>
+    invoke<DocumentView>("save_local", { documentId, markdown }),
+  discardLocal: (documentId: string) => invoke<void>("discard_local", { documentId }),
+  publishDocument: (documentId: string) =>
+    tracked(invoke<PublishResult>("publish_document", { documentId })),
+  resolveConflict: (documentId: string, copyId: number) =>
+    invoke<DocumentView>("resolve_conflict", { documentId, copyId }),
 };
 
 export function isCommandError(e: unknown): e is CommandError {
