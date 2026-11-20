@@ -37,6 +37,7 @@ cargo fmt --check
 
 - Colors come from the tokens in `src/styles.css` (Backlog palette, light and dark). Don't hard-code colors in components or extension CSS. Brand green `--brand` is for surfaces; text on white uses `--accent` / `--brand-strong` for contrast.
 - Links open in the default browser (`src/links.ts`); `src-tauri/src/navigation.rs` keeps the webview on the app's own pages. Backlog-hosted images load through the `backlog-asset` scheme (`src-tauri/src/assets.rs`), so the API key never reaches the webview.
+- To check the UI, run `pnpm preview:mock` and drive http://localhost:1430/preview.html instead of writing a throwaway mock. Switches: `?empty`, `?offline`, `?conflict`, `?doc=<id>` (ids in `src/dev/fixtures.ts`). Keep `src/dev/mockBackend.ts` in step with `src-tauri/src/commands.rs`.
 
 ## Git and PRs
 
