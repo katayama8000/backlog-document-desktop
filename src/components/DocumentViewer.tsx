@@ -1,6 +1,6 @@
 import { Markdown } from "@tiptap/markdown";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, isCommandError } from "../api";
 import type { ConflictCopy } from "../bindings/ConflictCopy";
 import type { DocumentView } from "../bindings/DocumentView";
@@ -15,6 +15,8 @@ import { childPages, showChildPages } from "../markdown/childlist";
 import "../markdown/childlist.css";
 import "../markdown/image.css";
 import "../markdown/inline.css";
+import { usePollResults } from "../polling";
+import { POLL_COUNT, formatAgo, remoteStatus } from "../remoteChanges";
 import { formatTime } from "./Sidebar";
 import { useLocalSave } from "./useLocalSave";
 
@@ -46,6 +48,15 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
   const [publishing, setPublishing] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  /** ISO 8601: when the app last confirmed Backlog has no newer version than the one shown. */
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
+  /** Backlog's `updated` for a newer version that wasn't loaded because there are local edits. */
+  const [newerOnBacklog, setNewerOnBacklog] = useState<string | null>(null);
+  /** Loading a newer version from Backlog; editing is off meanwhile. */
+  const [refreshing, setRefreshing] = useState(false);
+  /** The newest remote version a poll has already acted on. */
+  const handledRemote = useRef<string | null>(null);
+  const now = useNow(30_000);
   const online = useConnection() === "online";
 
   const editor = useEditor({
@@ -66,6 +77,7 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       (fetched) => {
         if (!current) return;
         setFromCache(fetched.fromCache);
+        setLastSynced(fetched.fetchedAt);
         show(fetched.data);
       },
       (e) => current && setError(errorMessage(e)),
@@ -96,7 +108,7 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
           online,
         }
       : null;
-  const editable = status !== null && status.readOnly === null && !publishing;
+  const editable = status !== null && status.readOnly === null && !publishing && !refreshing;
 
   useEffect(() => {
     editor?.setEditable(editable, false);
@@ -115,12 +127,55 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
     };
   }, [editor, saver.schedule]);
 
+  // A poll found that Backlog may have a newer version of this document.
+  usePollResults((poll) => {
+    if (!doc || !editor || publishing || refreshing) return;
+    const remote = remoteStatus(poll.recent, POLL_COUNT, documentId, doc.updated);
+    if (remote.kind === "same") {
+      setLastSynced(poll.at);
+      return;
+    }
+    if (remote.kind !== "newer" || handledRemote.current === remote.updated) return;
+    handledRemote.current = remote.updated;
+    loadNewer(remote.updated);
+  });
+
+  /**
+   * Shows Backlog's newer version, unless the editor holds anything not yet published: then
+   * only says so, because loading it would hide those edits.
+   */
+  async function loadNewer(updated: string) {
+    if (!editor || !doc) return;
+    // Stop typing first, then check that the editor holds exactly the stored, unedited text.
+    editor.setEditable(false, false);
+    const pristine = doc.localPlain === null && !saver.unsaved && editor.getMarkdown() === roundTrip?.output;
+    if (!pristine) {
+      editor.setEditable(editable, false);
+      setNewerOnBacklog(updated);
+      return;
+    }
+    setRefreshing(true);
+    try {
+      const fetched = await api.getDocument(documentId);
+      setFromCache(fetched.fromCache);
+      if (!fetched.fromCache) setLastSynced(fetched.fetchedAt);
+      show(fetched.data);
+    } catch {
+      // The next poll tries again.
+      handledRemote.current = null;
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function publish() {
     setPublishing(true);
     setMessage(null);
     try {
       await saver.flush();
       const result = await api.publishDocument(documentId);
+      setLastSynced(new Date().toISOString());
+      setNewerOnBacklog(null);
       show(result.document);
       setMessage(outcomeMessage(result));
     } catch (e) {
@@ -140,6 +195,8 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       await api.discardLocal(documentId);
       const fetched = await api.getDocument(documentId);
       setFromCache(fetched.fromCache);
+      setLastSynced(fetched.fetchedAt);
+      setNewerOnBacklog(null);
       show(fetched.data);
     } catch (e) {
       setMessage({ tone: "error", text: errorMessage(e) });
@@ -168,6 +225,11 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
             <span className={`sync-state sync-${state}`} role="status">
               {LABELS[state]}
             </span>
+            {lastSynced && (
+              <span className="sync-time" title={`Last checked against Backlog at ${formatTime(lastSynced)}`}>
+                Last synced {formatAgo(lastSynced, now)}
+              </span>
+            )}
             <span className="spacer" />
             {hasEdits(doc, status) &&
               !publishing &&
@@ -186,6 +248,12 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
           </div>
         )}
         {status?.readOnly && <p className="sync-note">{status.readOnly}</p>}
+        {newerOnBacklog && (
+          <p className="sync-note sync-note-warn">
+            Someone updated this document on Backlog {formatAgo(newerOnBacklog, now)}, and you have unpublished
+            edits. Publishing keeps your version as a conflict copy; discarding your edits loads Backlog's version.
+          </p>
+        )}
         {saver.error && <p className="sync-note sync-note-error">{saver.error}</p>}
         {message && <p className={`sync-note sync-note-${message.tone}`}>{message.text}</p>}
         {doc.conflicts.map((copy) => (
@@ -196,6 +264,16 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       {roundTrip !== null && <RoundTripReport original={roundTrip.original} roundTrip={roundTrip.output} />}
     </article>
   );
+}
+
+/** The current time, updated every `intervalMs`, for relative times like "5 min ago". */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 function outcomeMessage({ outcome, document }: PublishResult): Message | null {

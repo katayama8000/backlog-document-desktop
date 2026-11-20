@@ -7,6 +7,7 @@ import { DocumentViewer } from "./components/DocumentViewer";
 import { SettingsForm } from "./components/SettingsForm";
 import { Resizer } from "./components/Resizer";
 import { Sidebar } from "./components/Sidebar";
+import { usePolling } from "./polling";
 import { loadWidth, saveWidth } from "./sidebarWidth";
 
 type Screen =
@@ -20,6 +21,7 @@ export default function App() {
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [tree, setTree] = useState<Fetched<DocumentTree> | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(loadWidth);
+  usePolling(screen.kind === "main" ? (tree?.data.projectId ?? null) : null);
 
   const reload = () =>
     api

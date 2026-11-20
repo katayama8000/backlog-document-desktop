@@ -237,6 +237,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Sync bar: state, discard and publish */
 .sync-bar { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .sync-bar .spacer { flex: 1; }
+.sync-time { font-size: 12px; color: var(--muted); }
 .sync-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
 .sync-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .sync-synced { color: var(--ok); }
