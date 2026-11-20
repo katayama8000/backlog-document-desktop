@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "preview:mock": "vite --port 1430 --open /preview.html",
     "tauri": "tauri",
     "test": "node --test \"scripts/*.test.ts\"",
     "test:realdocs": "node scripts/realdocs.ts"

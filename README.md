@@ -105,6 +105,16 @@ pnpm test:realdocs       # round-trip every document in the app's local cache
 
 TypeScript types in `src/bindings/` are generated from Rust structs by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit them by hand.
 
+### Preview without Backlog
+
+```sh
+pnpm preview:mock
+```
+
+opens the real UI in your browser at http://localhost:1430/preview.html, backed by an in-memory fake of the Tauri commands and a sample space (`src/dev/`). It needs no Backlog account, API key or Keychain, and nothing reaches Backlog. A "Mock preview" badge marks the page. Reloading starts over.
+
+URL switches, combinable: `?empty` (first-run settings screen), `?offline` (Backlog unreachable, everything cached), `?conflict` (the next publish finds a change made on Backlog), `?doc=<id>` (open a document, e.g. `?doc=forms` for the page with every Backlog form). In the console, `mockBackend` drives more scenarios, e.g. `mockBackend.remoteChanges("editing", "new text")`.
+
 ## Repository layout
 
 ```
@@ -112,6 +122,7 @@ crates/backlog-api/   # Backlog API client
 src-tauri/            # Tauri app (commands, SQLite cache, keychain, asset scheme, navigation guard)
 src/                  # React frontend
 src/markdown/         # TipTap extensions for Backlog's Markdown (parse, render, write back)
+src/dev/              # Mock backend and sample space for `pnpm preview:mock` (not in the app bundle)
 scripts/              # Markdown tests and the real-document round-trip check
 docs/                 # Design documents (Japanese)
 ```
