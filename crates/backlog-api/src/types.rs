@@ -62,6 +62,16 @@ pub struct Document {
     pub updated: String,
 }
 
+/// Response of `PATCH /api/v2/documents/:id/content`. It has no body: fetch the document again.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentUpdate {
+    /// The body was saved, but Backlog could not regenerate its Markdown, so `plain` may stay
+    /// stale even when fetched again.
+    #[serde(default)]
+    pub markdown_is_fallback: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +119,29 @@ mod tests {
         let doc: Document = serde_json::from_str(json).unwrap();
         assert_eq!(doc.title, "top");
         assert!(doc.plain.unwrap().contains("{#abc}"));
+    }
+
+    #[test]
+    fn decodes_content_update() {
+        let json = r#"{
+            "id": "0123456789abcdef0123456789abcdef",
+            "projectId": 1,
+            "title": "top",
+            "json": "{}",
+            "statusId": 1,
+            "created": "2025-04-28T01:47:02Z",
+            "updated": "2026-11-20T03:00:00Z",
+            "markdownIsFallback": true
+        }"#;
+        let update: ContentUpdate = serde_json::from_str(json).unwrap();
+        assert!(update.markdown_is_fallback);
+    }
+
+    #[test]
+    fn content_update_without_fallback_flag_is_not_fallback() {
+        let json =
+            r#"{"id": "0123456789abcdef0123456789abcdef", "updated": "2026-11-20T03:00:00Z"}"#;
+        let update: ContentUpdate = serde_json::from_str(json).unwrap();
+        assert!(!update.markdown_is_fallback);
     }
 }
