@@ -11,8 +11,8 @@ use ts_rs::TS;
 use crate::error::{CommandError, ErrorKind};
 use crate::secrets;
 use crate::state::AppState;
-use crate::store::{ConflictCopy, PROJECT_KEY, SPACE_URL, Store, StoredDocument};
-use crate::sync::{self, PublishOutcome};
+use crate::store::{PROJECT_KEY, SPACE_URL, Store, StoredDocument, Version, VersionReason};
+use crate::sync::{self, MergeProposal, PublishOutcome, PullOutcome};
 
 type CommandResult<T> = Result<T, CommandError>;
 
@@ -53,8 +53,8 @@ pub struct DocumentView {
     /// Backlog could not regenerate the Markdown after the last publish, so `plain` may be
     /// stale. Editing stays off until a fetch returns a different body.
     pub read_only: bool,
-    /// Unresolved conflict copies, oldest first.
-    pub conflicts: Vec<ConflictCopy>,
+    /// How many earlier bodies are kept (see `list_versions`).
+    pub version_count: u32,
     pub state: SyncState,
 }
 
@@ -67,15 +67,11 @@ pub enum SyncState {
     Synced,
     /// Local edits not yet published.
     Edited,
-    /// A conflict copy is unresolved. There may be local edits too.
-    Conflict,
 }
 
 impl DocumentView {
-    fn new(d: StoredDocument, conflicts: Vec<ConflictCopy>) -> Self {
-        let state = if !conflicts.is_empty() {
-            SyncState::Conflict
-        } else if d.local_plain.is_some() {
+    fn new(d: StoredDocument, version_count: u32) -> Self {
+        let state = if d.local_plain.is_some() {
             SyncState::Edited
         } else {
             SyncState::Synced
@@ -88,7 +84,7 @@ impl DocumentView {
             updated: d.base_updated,
             local_plain: d.local_plain,
             read_only: d.read_only,
-            conflicts,
+            version_count,
             state,
         }
     }
@@ -97,7 +93,7 @@ impl DocumentView {
 /// Builds the view of a stored document.
 pub(crate) fn document_view(store: &Store, id: &str) -> CommandResult<DocumentView> {
     let doc = store.document(id)?.ok_or_else(CommandError::not_stored)?;
-    Ok(DocumentView::new(doc, store.conflict_copies(id)?))
+    Ok(DocumentView::new(doc, store.version_count(id)?))
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -107,6 +103,19 @@ pub struct PublishResult {
     pub outcome: PublishOutcome,
     /// The document after publishing. Show its local edits, or its base when there are none.
     pub document: DocumentView,
+    /// The places to decide, when the outcome is `needsMerge`.
+    pub merge: Option<MergeProposal>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullResult {
+    pub outcome: PullOutcome,
+    /// The document afterwards. Show its local edits, or its base when there are none.
+    pub document: DocumentView,
+    /// The places to decide, when the outcome is `needsMerge`.
+    pub merge: Option<MergeProposal>,
 }
 
 /// Loads saved settings and prepares the API client when possible.
@@ -196,7 +205,7 @@ pub async fn get_document(
     };
     Ok(Fetched {
         fetched_at: stored.fetched_at.clone(),
-        data: DocumentView::new(stored, state.store.conflict_copies(&document_id)?),
+        data: DocumentView::new(stored, state.store.version_count(&document_id)?),
         from_cache,
     })
 }
@@ -247,7 +256,8 @@ pub fn save_local(
     document_view(&state.store, &document_id)
 }
 
-/// Drops the local edits. Fetch the document again to show the current body.
+/// Drops the local edits, keeping them as a version. Fetch the document again to show the
+/// current body.
 #[tauri::command]
 pub fn discard_local(state: State<'_, AppState>, document_id: String) -> CommandResult<()> {
     state.store.discard_local(&document_id)?;
@@ -261,21 +271,74 @@ pub async fn publish_document(
     document_id: String,
 ) -> CommandResult<PublishResult> {
     let client = state.client()?;
-    let outcome = sync::publish(&client, &state.store, &document_id).await?;
+    let (outcome, merge) = sync::publish(&client, &state.store, &document_id).await?;
     Ok(PublishResult {
         outcome,
         document: document_view(&state.store, &document_id)?,
+        merge,
     })
 }
 
-/// Marks a conflict copy as dealt with.
+/// "Bring in Backlog's changes" (design §6.6).
 #[tauri::command]
-pub fn resolve_conflict(
+pub async fn pull_document(
     state: State<'_, AppState>,
     document_id: String,
-    copy_id: i64,
+) -> CommandResult<PullResult> {
+    let client = state.client()?;
+    let (outcome, merge) = sync::pull(&client, &state.store, &document_id).await?;
+    Ok(PullResult {
+        outcome,
+        document: document_view(&state.store, &document_id)?,
+        merge,
+    })
+}
+
+/// Applies a merge the user decided: `markdown` becomes the local edits on top of Backlog's
+/// body from the proposal. The edits it replaces are kept as a version.
+#[tauri::command]
+pub fn apply_merge(
+    state: State<'_, AppState>,
+    document_id: String,
+    markdown: String,
+    remote_plain: String,
+    remote_updated: String,
 ) -> CommandResult<DocumentView> {
-    state.store.resolve_conflict(&document_id, copy_id)?;
+    if state.store.document(&document_id)?.is_none() {
+        return Err(CommandError::not_stored());
+    }
+    state.store.rebase(
+        &document_id,
+        &remote_plain,
+        &remote_updated,
+        &markdown,
+        VersionReason::BeforeMerge,
+    )?;
+    document_view(&state.store, &document_id)
+}
+
+/// Earlier bodies of a document, newest first.
+#[tauri::command]
+pub fn list_versions(
+    state: State<'_, AppState>,
+    document_id: String,
+) -> CommandResult<Vec<Version>> {
+    Ok(state.store.versions(&document_id)?)
+}
+
+/// Makes a kept version the local edits; the edits it replaces are kept as a version.
+#[tauri::command]
+pub fn restore_version(
+    state: State<'_, AppState>,
+    document_id: String,
+    version_id: i64,
+) -> CommandResult<DocumentView> {
+    if !state.store.restore_version(&document_id, version_id)? {
+        return Err(CommandError::new(
+            ErrorKind::InvalidInput,
+            "no such version",
+        ));
+    }
     document_view(&state.store, &document_id)
 }
 

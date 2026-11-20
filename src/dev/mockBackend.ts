@@ -1,8 +1,8 @@
 // An in-memory stand-in for the Tauri commands in src-tauri/src/commands.rs, for running the UI
 // without Backlog (`pnpm preview:mock`). It keeps the commands' behaviour: the local store,
-// the cache fallback when offline, and publishing with conflict copies (src-tauri/src/sync.rs).
+// the cache fallback when offline, publishing and merging (src-tauri/src/sync.rs), and the kept
+// versions (src-tauri/src/store.rs).
 import type { CommandError } from "../bindings/CommandError.ts";
-import type { ConflictCopy } from "../bindings/ConflictCopy.ts";
 import type { Document } from "../bindings/Document.ts";
 import type { DocumentSummary } from "../bindings/DocumentSummary.ts";
 import type { DocumentTree } from "../bindings/DocumentTree.ts";
@@ -11,10 +11,16 @@ import type { ErrorKind } from "../bindings/ErrorKind.ts";
 import type { Fetched } from "../bindings/Fetched.ts";
 import type { Project } from "../bindings/Project.ts";
 import type { PublishOutcome } from "../bindings/PublishOutcome.ts";
+import type { MergeProposal } from "../bindings/MergeProposal.ts";
 import type { PublishResult } from "../bindings/PublishResult.ts";
+import type { PullOutcome } from "../bindings/PullOutcome.ts";
+import type { PullResult } from "../bindings/PullResult.ts";
 import type { Settings } from "../bindings/Settings.ts";
 import type { TreeNode } from "../bindings/TreeNode.ts";
 import type { User } from "../bindings/User.ts";
+import type { Version } from "../bindings/Version.ts";
+import type { VersionReason } from "../bindings/VersionReason.ts";
+import { clean, merge } from "./merge3.ts";
 
 /** A document and its place in the tree. An empty title shows as untitled. */
 export type MockPage = {
@@ -46,7 +52,13 @@ export type MockCommands = {
   save_local: { args: { documentId: string; markdown: string }; result: DocumentView };
   discard_local: { args: { documentId: string }; result: null };
   publish_document: { args: { documentId: string }; result: PublishResult };
-  resolve_conflict: { args: { documentId: string; copyId: number }; result: DocumentView };
+  pull_document: { args: { documentId: string }; result: PullResult };
+  apply_merge: {
+    args: { documentId: string; markdown: string; remotePlain: string; remoteUpdated: string };
+    result: DocumentView;
+  };
+  list_versions: { args: { documentId: string }; result: Version[] };
+  restore_version: { args: { documentId: string; versionId: number }; result: DocumentView };
 };
 
 export type MockCommand = keyof MockCommands;
@@ -59,7 +71,10 @@ type Stored = {
   fetchedAt: string;
 };
 
-type StoredCopy = ConflictCopy & { documentId: string; resolved: boolean };
+type StoredVersion = Version & { documentId: string };
+
+/** `store::VERSIONS_KEPT` */
+const VERSIONS_KEPT = 20;
 
 export type MockBackend = ReturnType<typeof createMockBackend>;
 
@@ -90,10 +105,10 @@ function parseSpaceUrl(input: string): string {
 }
 
 /** `doc_sync_engine::plan_push`: what publishing does, from the base, the local edits and the remote. */
-function planPush(base: Document, local: string, remote: Document): PublishOutcome {
+function planPush(base: Document, local: string, remote: Document): "send" | "conflict" | "nothingToSend" {
   const plain = (d: Document) => d.plain ?? "";
   if (local === plain(remote) || local === plain(base)) return "nothingToSend";
-  return plain(remote) === plain(base) && remote.updated === base.updated ? "published" : "conflict";
+  return plain(remote) === plain(base) && remote.updated === base.updated ? "send" : "conflict";
 }
 
 /**
@@ -122,8 +137,8 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
   let conflictNext = false;
   const cache = new Map<string, { data: unknown; fetchedAt: string }>();
   const stored = new Map<string, Stored>();
-  const copies: StoredCopy[] = [];
-  let nextCopyId = 1;
+  const versions: StoredVersion[] = [];
+  let nextVersionId = 1;
   let nextDocumentId = 1;
 
   /** `POST /api/v2/documents` with `addLast=true`. */
@@ -180,9 +195,6 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
 
   function view(id: string): DocumentView {
     const { base, localPlain, readOnly } = storedDocument(id);
-    const conflicts = copies
-      .filter((c) => c.documentId === id && !c.resolved)
-      .map((c) => ({ id: c.id, localPlain: c.localPlain, remotePlain: c.remotePlain, remoteUpdated: c.remoteUpdated, createdAt: c.createdAt }));
     return {
       id,
       projectId: base.projectId,
@@ -191,8 +203,8 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
       updated: base.updated,
       localPlain,
       readOnly,
-      conflicts,
-      state: conflicts.length ? "conflict" : localPlain !== null ? "edited" : "synced",
+      versionCount: versions.filter((v) => v.documentId === id).length,
+      state: localPlain !== null ? "edited" : "synced",
     };
   }
 
@@ -229,34 +241,76 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
     remote.set(id, { ...doc, plain, updated: now() });
   }
 
-  function publish(id: string): PublishOutcome {
+  /** `store::add_version`: keeps `plain` unless it is the newest version already. */
+  function addVersion(documentId: string, plain: string, reason: VersionReason): void {
+    const own = versions.filter((v) => v.documentId === documentId);
+    if (own[own.length - 1]?.plain === plain) return;
+    versions.push({ id: nextVersionId++, documentId, plain, reason, createdAt: now() });
+    const extra = own.length + 1 - VERSIONS_KEPT;
+    for (let n = 0; n < extra; n++) versions.splice(versions.indexOf(own[n]), 1);
+  }
+
+  /** `store::rebase`: `base` becomes the base and `local` the edits; replaced edits are kept. */
+  function rebase(id: string, basePlain: string, baseUpdated: string, local: string, reason: VersionReason): void {
+    const doc = storedDocument(id);
+    if (doc.localPlain !== null && doc.localPlain !== local) addVersion(id, doc.localPlain, reason);
+    doc.base = { ...doc.base, plain: basePlain, updated: baseUpdated };
+    doc.localPlain = basePlain === local ? null : local;
+    doc.readOnly = false;
+    doc.fetchedAt = now();
+  }
+
+  function proposal(chunks: MergeProposal["chunks"], current: Document): MergeProposal {
+    return { chunks, remotePlain: current.plain ?? "", remoteUpdated: current.updated };
+  }
+
+  function publish(id: string): { outcome: PublishOutcome; merge: MergeProposal | null } {
     const { base, localPlain, readOnly } = storedDocument(id);
     if (readOnly) throw fail("invalidInput", "the document is read-only");
-    if (localPlain === null) return "nothingToSend";
+    if (localPlain === null) return { outcome: "nothingToSend", merge: null };
     if (conflictNext && !offline) {
       conflictNext = false;
       remoteChanges(id, `${remote.get(id)?.plain ?? ""}\n\n${REMOTE_EDIT}`);
     }
     const current = backlog(() => remoteDocument(id));
-    const outcome = planPush(base, localPlain, current);
-    if (outcome === "conflict") {
-      copies.push({
-        id: nextCopyId++,
-        documentId: id,
-        resolved: false,
-        localPlain,
-        remotePlain: current.plain ?? "",
-        remoteUpdated: current.updated,
-        createdAt: now(),
-      });
+    const plan = planPush(base, localPlain, current);
+    if (plan === "nothingToSend") {
       settle(current, localPlain);
-    } else if (outcome === "published") {
-      remoteChanges(id, localPlain);
-      settle(remoteDocument(id), localPlain);
-    } else {
-      settle(current, localPlain);
+      return { outcome: "nothingToSend", merge: null };
     }
-    return outcome;
+    let content = localPlain;
+    let outcome: PublishOutcome = "published";
+    if (plan === "conflict") {
+      const chunks = merge(base.plain ?? "", localPlain, current.plain ?? "");
+      const merged = clean(chunks);
+      if (merged === null) return { outcome: "needsMerge", merge: proposal(chunks, current) };
+      if (merged === (current.plain ?? "")) {
+        rebase(id, merged, current.updated, merged, "beforeMerge");
+        return { outcome: "nothingToSend", merge: null };
+      }
+      addVersion(id, localPlain, "beforeMerge");
+      content = merged;
+      outcome = "merged";
+    }
+    remoteChanges(id, content);
+    settle(remoteDocument(id), localPlain);
+    return { outcome, merge: null };
+  }
+
+  function pull(id: string): { outcome: PullOutcome; merge: MergeProposal | null } {
+    const doc = storedDocument(id);
+    const base = doc.base;
+    const local = doc.localPlain;
+    const current = backlog(() => remoteDocument(id));
+    const unchanged = (current.plain ?? "") === (base.plain ?? "") && current.updated === base.updated;
+    putDocument(current);
+    if (local === null) return { outcome: unchanged ? "upToDate" : "updated", merge: null };
+    if (unchanged) return { outcome: "upToDate", merge: null };
+    const chunks = merge(base.plain ?? "", local, current.plain ?? "");
+    const merged = clean(chunks);
+    if (merged === null) return { outcome: "needsMerge", merge: proposal(chunks, current) };
+    rebase(id, current.plain ?? "", current.updated, merged, "beforeMerge");
+    return { outcome: "merged", merge: null };
   }
 
   const commands: { [C in MockCommand]: (args: MockCommands[C]["args"]) => MockCommands[C]["result"] } = {
@@ -268,7 +322,7 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
       if (settings.spaceUrl !== url) {
         cache.clear();
         stored.clear();
-        copies.length = 0;
+        versions.length = 0;
       }
       settings = { ...settings, spaceUrl: url, hasApiKey: true };
       return space.user;
@@ -316,17 +370,35 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
     },
     discard_local: ({ documentId }) => {
       const doc = stored.get(documentId);
+      if (doc?.localPlain != null) addVersion(documentId, doc.localPlain, "discarded");
       if (doc) doc.localPlain = null;
       return null;
     },
     publish_document: ({ documentId }) => {
       requireClient();
-      const outcome = publish(documentId);
-      return { outcome, document: view(documentId) };
+      const { outcome, merge } = publish(documentId);
+      return { outcome, document: view(documentId), merge };
     },
-    resolve_conflict: ({ documentId, copyId }) => {
-      const copy = copies.find((c) => c.id === copyId && c.documentId === documentId);
-      if (copy) copy.resolved = true;
+    pull_document: ({ documentId }) => {
+      requireClient();
+      const { outcome, merge } = pull(documentId);
+      return { outcome, document: view(documentId), merge };
+    },
+    apply_merge: ({ documentId, markdown, remotePlain, remoteUpdated }) => {
+      rebase(documentId, remotePlain, remoteUpdated, markdown, "beforeMerge");
+      return view(documentId);
+    },
+    list_versions: ({ documentId }) =>
+      versions
+        .filter((v) => v.documentId === documentId)
+        .reverse()
+        .map(({ id, plain, reason, createdAt }) => ({ id, plain, reason, createdAt })),
+    restore_version: ({ documentId, versionId }) => {
+      const version = versions.find((v) => v.id === versionId && v.documentId === documentId);
+      if (!version) throw fail("invalidInput", "no such version");
+      const doc = storedDocument(documentId);
+      if (doc.localPlain !== null && doc.localPlain !== version.plain) addVersion(documentId, doc.localPlain, "beforeRestore");
+      doc.localPlain = (doc.base.plain ?? "") === version.plain ? null : version.plain;
       return view(documentId);
     },
   };

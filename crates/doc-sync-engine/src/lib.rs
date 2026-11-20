@@ -1,6 +1,10 @@
 //! Sync decisions for Backlog documents (docs/design.md §6). Pure functions: no network, no
 //! database.
 
+mod merge;
+
+pub use merge::{Chunk, clean, merge};
+
 /// A document body as Backlog stores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Snapshot<'a> {
@@ -15,7 +19,7 @@ pub struct Snapshot<'a> {
 pub enum PushPlan {
     /// Send this body.
     Send(String),
-    /// Backlog changed since the local edits started: keep them aside as a conflict copy.
+    /// Backlog changed since the local edits started: merge them with Backlog's body first.
     Conflict,
     /// Backlog already has the local body, or there are no local edits: adopt the remote.
     NothingToSend,

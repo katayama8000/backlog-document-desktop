@@ -3,4 +3,4 @@
 /**
  * Derived from the stored data, never stored itself.
  */
-export type SyncState = "synced" | "edited" | "conflict";
+export type SyncState = "synced" | "edited";

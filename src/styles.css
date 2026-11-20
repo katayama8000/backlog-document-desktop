@@ -243,21 +243,43 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sync-synced { color: var(--ok); }
 .sync-edited { color: var(--warn); }
 .sync-publishing { color: var(--info); }
-.sync-conflict { color: var(--error); }
+.sync-merging { color: var(--error); }
 .sync-readOnly { color: var(--muted); }
 .sync-note { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 .sync-note-ok { color: var(--ok); }
 .sync-note-warn { color: var(--warn); }
 .sync-note-error { color: var(--error); }
-.conflict {
+.newer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Merging Backlog's changes */
+.merge, .versions {
   margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--error);
+  padding: 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: 13px;
 }
-.conflict p { margin: 0 0 8px; }
-.conflict .diff { margin-bottom: 0; max-height: 320px; overflow: auto; }
+.merge { border-color: var(--warn); }
+.merge > p { margin: 0 0 12px; }
+.merge-place { margin-bottom: 14px; }
+.merge-head { margin-bottom: 4px; }
+.merge-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.merge-side { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.merge-label { padding: 4px 8px; font-size: 12px; font-weight: 600; background: var(--bg-sub); border-bottom: 1px solid var(--border); }
+.merge-side pre { margin: 0; padding: 8px; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, monospace; font-size: 12px; max-height: 240px; overflow: auto; }
+.merge-choices { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.merge-choices label { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.merge-choices label.chosen { border-color: var(--accent); background: var(--brand-tint); }
+.merge-choices input { margin: 0; }
+@media (max-width: 640px) { .merge-sides { grid-template-columns: 1fr; } }
+
+/* Previous versions */
+.versions > p { margin: 0 0 8px; }
+.version { border-top: 1px solid var(--border); padding: 6px 0; }
+.version-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.version-time { font-size: 12px; font-weight: 600; }
+.version-preview { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.version-text { margin: 6px 0 0; padding: 8px; background: var(--bg-sub); border-radius: var(--radius); white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, monospace; font-size: 12px; max-height: 320px; overflow: auto; }
 
 /* Round-trip report */
 .roundtrip { margin-top: 32px; border-top: 1px dashed var(--border); padding-top: 12px; font-size: 12px; }

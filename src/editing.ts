@@ -1,13 +1,15 @@
 // What the document toolbar shows, derived from the stored document and the editor's state.
 import type { DocumentView } from "./bindings/DocumentView";
 
-export type Indicator = "synced" | "edited" | "publishing" | "conflict" | "readOnly";
+export type Indicator = "synced" | "edited" | "publishing" | "merging" | "readOnly";
 
 /** The editor's side of the state. */
 export type EditorStatus = {
   /** Null when editing is allowed (see `readOnlyReason`). */
   readOnly: string | null;
   publishing: boolean;
+  /** Overlapping changes from Backlog are waiting for the user's decisions. */
+  merging: boolean;
   /** Edits typed but not yet saved locally. */
   unsaved: boolean;
   online: boolean;
@@ -31,7 +33,7 @@ export function readOnlyReason(doc: DocumentView, roundTrips: boolean): string |
 export function indicator(doc: DocumentView, s: EditorStatus): Indicator {
   if (s.publishing) return "publishing";
   if (s.readOnly !== null) return "readOnly";
-  if (doc.state === "conflict") return "conflict";
+  if (s.merging) return "merging";
   return s.unsaved ? "edited" : doc.state;
 }
 
@@ -43,6 +45,7 @@ export function hasEdits(doc: DocumentView, s: EditorStatus): boolean {
 export function publishBlocker(doc: DocumentView, s: EditorStatus): string | null {
   if (s.publishing) return "Publishing…";
   if (s.readOnly !== null) return "This document is read-only.";
+  if (s.merging) return "Decide the overlapping changes first.";
   if (!hasEdits(doc, s)) return "Nothing to publish.";
   if (!s.online) return "Offline: publishing needs a connection to Backlog.";
   return null;
