@@ -42,6 +42,11 @@ impl Error {
         matches!(self, Error::Network(_))
     }
 
+    /// True for `429 Too Many Requests`: the user's per-minute rate limit was reached.
+    pub fn is_rate_limited(&self) -> bool {
+        self.status() == Some(429)
+    }
+
     pub fn status(&self) -> Option<u16> {
         match self {
             Error::Api { status, .. } => Some(*status),

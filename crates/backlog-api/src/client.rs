@@ -4,7 +4,9 @@ use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
 use crate::error::ApiErrorBody;
-use crate::{ContentUpdate, Document, DocumentTree, Error, Project, SpaceUrl, User};
+use crate::{
+    ContentUpdate, Document, DocumentSummary, DocumentTree, Error, Project, SpaceUrl, User,
+};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// Files can be much larger than JSON responses.
@@ -70,6 +72,27 @@ impl Client {
     pub async fn document(&self, document_id: &str) -> Result<Document, Error> {
         let path = format!("/api/v2/documents/{document_id}");
         self.get(&path, &[]).await
+    }
+
+    /// `GET /api/v2/documents` — the `count` most recently updated documents of a project,
+    /// newest first. Used to notice changes made on Backlog.
+    pub async fn recent_documents(
+        &self,
+        project_id: i64,
+        count: u8,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let response = send(self.recent_documents_request(project_id, count)).await?;
+        response.json().await.map_err(Error::Decode)
+    }
+
+    fn recent_documents_request(&self, project_id: i64, count: u8) -> reqwest::RequestBuilder {
+        self.request(Method::GET, "/api/v2/documents").query(&[
+            ("projectId[]", project_id.to_string()),
+            ("sort", "updated".to_string()),
+            ("order", "desc".to_string()),
+            ("offset", "0".to_string()),
+            ("count", count.clamp(1, 100).to_string()),
+        ])
     }
 
     /// `PATCH /api/v2/documents/:documentId/content` — replaces the whole body with `content`
@@ -208,6 +231,30 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn recent_documents_asks_for_the_newest_first() {
+        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let request = client.recent_documents_request(42, 5).build().unwrap();
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.url().path(), "/api/v2/documents");
+        let query: Vec<(String, String)> = request
+            .url()
+            .query_pairs()
+            .into_owned()
+            .filter(|(k, _)| k != "apiKey")
+            .collect();
+        assert_eq!(
+            query,
+            pairs(&[
+                ("projectId[]", "42"),
+                ("sort", "updated"),
+                ("order", "desc"),
+                ("offset", "0"),
+                ("count", "5"),
+            ])
+        );
     }
 
     #[test]

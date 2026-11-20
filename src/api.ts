@@ -1,13 +1,16 @@
 // Typed wrappers around Tauri commands (see src-tauri/src/commands.rs).
 import { invoke } from "@tauri-apps/api/core";
 import type { CommandError } from "./bindings/CommandError";
+import type { DocumentSummary } from "./bindings/DocumentSummary";
 import type { DocumentTree } from "./bindings/DocumentTree";
 import type { DocumentView } from "./bindings/DocumentView";
 import type { Fetched } from "./bindings/Fetched";
 import type { Project } from "./bindings/Project";
 import type { PublishResult } from "./bindings/PublishResult";
+import type { PullResult } from "./bindings/PullResult";
 import type { Settings } from "./bindings/Settings";
 import type { User } from "./bindings/User";
+import type { Version } from "./bindings/Version";
 import { reportOutcome } from "./connection";
 
 /** Runs a Backlog call and reports whether it reached Backlog (see connection.ts). */
@@ -41,13 +44,19 @@ export const api = {
     tracked(invoke<Fetched<DocumentView>>("get_document", { documentId })),
   createDocument: (projectId: bigint, title: string, parentId: string | null) =>
     tracked(invoke<DocumentView>("create_document", { projectId, title, parentId })),
+  recentDocuments: (projectId: bigint, count: number) =>
+    tracked(invoke<DocumentSummary[]>("recent_documents", { projectId, count })),
   saveLocal: (documentId: string, markdown: string) =>
     invoke<DocumentView>("save_local", { documentId, markdown }),
   discardLocal: (documentId: string) => invoke<void>("discard_local", { documentId }),
   publishDocument: (documentId: string) =>
     tracked(invoke<PublishResult>("publish_document", { documentId })),
-  resolveConflict: (documentId: string, copyId: number) =>
-    invoke<DocumentView>("resolve_conflict", { documentId, copyId }),
+  pullDocument: (documentId: string) => tracked(invoke<PullResult>("pull_document", { documentId })),
+  applyMerge: (documentId: string, markdown: string, remotePlain: string, remoteUpdated: string) =>
+    invoke<DocumentView>("apply_merge", { documentId, markdown, remotePlain, remoteUpdated }),
+  listVersions: (documentId: string) => invoke<Version[]>("list_versions", { documentId }),
+  restoreVersion: (documentId: string, versionId: number) =>
+    invoke<DocumentView>("restore_version", { documentId, versionId }),
 };
 
 export function isCommandError(e: unknown): e is CommandError {
@@ -62,6 +71,8 @@ export function errorMessage(e: unknown): string {
       return "The API key was rejected.";
     case "offline":
       return "Cannot reach the server, and nothing is cached.";
+    case "rateLimited":
+      return "Backlog's API rate limit was reached. Try again in a minute.";
     case "notConfigured":
       return "Connection settings are missing.";
     default:

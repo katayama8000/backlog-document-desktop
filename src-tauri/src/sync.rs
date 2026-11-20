@@ -1,14 +1,15 @@
-//! Publishing local edits to Backlog (design §6.3): the I/O around `doc_sync_engine::plan_push`.
+//! Publishing local edits to Backlog and bringing in Backlog's changes (design §6.3, §6.6): the
+//! I/O around `doc_sync_engine::plan_push` and `doc_sync_engine::merge`.
 
 use std::future::Future;
 
 use backlog_api::{Client, ContentUpdate, Document};
-use doc_sync_engine::{PushPlan, Snapshot, plan_push};
+use doc_sync_engine::{Chunk, PushPlan, Snapshot, clean, merge, plan_push};
 use serde::Serialize;
 use ts_rs::TS;
 
 use crate::error::{CommandError, ErrorKind};
-use crate::store::Store;
+use crate::store::{Store, StoredDocument, VersionReason};
 
 /// How many times a publish starts over when Backlog reports a concurrent edit.
 const MAX_ATTEMPTS: usize = 3;
@@ -50,21 +51,80 @@ impl DocumentApi for Client {
 pub enum PublishOutcome {
     /// Backlog has the local edits, and the body it stored is the new base.
     Published,
-    /// Backlog changed meanwhile. The local edits became a conflict copy, and Backlog's body is
-    /// the new base.
-    Conflict,
+    /// Backlog changed meanwhile in other places: its changes were merged into the local edits,
+    /// and the merged body was published.
+    Merged,
+    /// Backlog changed meanwhile in the same places. Nothing was sent and nothing changed: the
+    /// user decides each place (see `MergeProposal`), then publishes again.
+    NeedsMerge,
     /// Nothing was sent: there were no local edits, or Backlog already had them.
     NothingToSend,
 }
 
+/// What "Bring in Backlog's changes" did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PullOutcome {
+    /// Backlog has nothing newer.
+    UpToDate,
+    /// There were no local edits: Backlog's body is now shown.
+    Updated,
+    /// Backlog's changes were merged into the local edits.
+    Merged,
+    /// Backlog changed the same places as the local edits. Nothing changed yet.
+    NeedsMerge,
+}
+
+/// A piece of a merge, for the user to review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum MergeChunk {
+    /// Text the merge settled.
+    Same { text: String },
+    /// A place both sides changed: keep Backlog's lines, the local ones, or both.
+    Conflict { local: String, remote: String },
+}
+
+/// A merge that needs decisions. Apply the chosen text with `apply_merge`, passing back
+/// `remote_plain` and `remote_updated` as the new base.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MergeProposal {
+    pub chunks: Vec<MergeChunk>,
+    pub remote_plain: String,
+    /// ISO 8601
+    pub remote_updated: String,
+}
+
+impl MergeProposal {
+    fn new(chunks: Vec<Chunk>, remote: &Document) -> Self {
+        Self {
+            chunks: chunks
+                .into_iter()
+                .map(|c| match c {
+                    Chunk::Same(text) => MergeChunk::Same { text },
+                    Chunk::Conflict { local, remote } => MergeChunk::Conflict { local, remote },
+                })
+                .collect(),
+            remote_plain: remote.plain.clone().unwrap_or_default(),
+            remote_updated: remote.updated.clone(),
+        }
+    }
+}
+
 /// Publishes the local edits of a stored document. Fetching and sending happen back to back to
-/// keep the window for a lost update short (design §6.4). Whatever happens, the local edits stay
-/// in the store, are published, or become a conflict copy.
+/// keep the window for a lost update short (design §6.4). When Backlog changed meanwhile, its
+/// changes are merged in first; if they overlap the local edits, nothing is sent and the
+/// returned proposal lists the places to decide. The local edits are never dropped: they stay,
+/// are published, or are kept as a version before a merged body replaces them.
 pub async fn publish(
     api: &impl DocumentApi,
     store: &Store,
     id: &str,
-) -> Result<PublishOutcome, CommandError> {
+) -> Result<(PublishOutcome, Option<MergeProposal>), CommandError> {
     let doc = store.document(id)?.ok_or_else(CommandError::not_stored)?;
     if doc.read_only {
         return Err(CommandError::new(
@@ -72,24 +132,41 @@ pub async fn publish(
             "the document is read-only",
         ));
     }
-    let Some(local) = doc.local_plain else {
-        return Ok(PublishOutcome::NothingToSend);
+    let Some(local) = doc.local_plain.as_deref() else {
+        return Ok((PublishOutcome::NothingToSend, None));
     };
-    let base = Snapshot {
-        plain: doc.base_plain.as_deref().unwrap_or_default(),
-        updated: doc.base_updated.as_deref().unwrap_or_default(),
-    };
+    let base = base_snapshot(&doc);
     for _ in 0..MAX_ATTEMPTS {
         let remote = api.document(id).await?;
-        let content = match plan_push(base, &local, snapshot(&remote)) {
-            PushPlan::Send(content) => content,
+        let remote_plain = remote.plain.as_deref().unwrap_or_default();
+        let (content, outcome) = match plan_push(base, local, snapshot(&remote)) {
+            PushPlan::Send(content) => (content, PublishOutcome::Published),
             PushPlan::Conflict => {
-                store.record_conflict(&remote, &local)?;
-                return Ok(PublishOutcome::Conflict);
+                let chunks = merge(base.plain, local, remote_plain);
+                match clean(&chunks) {
+                    None => {
+                        let proposal = MergeProposal::new(chunks, &remote);
+                        return Ok((PublishOutcome::NeedsMerge, Some(proposal)));
+                    }
+                    Some(merged) if merged == remote_plain => {
+                        store.rebase(
+                            id,
+                            remote_plain,
+                            &remote.updated,
+                            &merged,
+                            VersionReason::BeforeMerge,
+                        )?;
+                        return Ok((PublishOutcome::NothingToSend, None));
+                    }
+                    Some(merged) => {
+                        store.add_version(id, local, VersionReason::BeforeMerge)?;
+                        (merged, PublishOutcome::Merged)
+                    }
+                }
             }
             PushPlan::NothingToSend => {
-                store.settle(&remote, &local, false)?;
-                return Ok(PublishOutcome::NothingToSend);
+                store.settle(&remote, local, false)?;
+                return Ok((PublishOutcome::NothingToSend, None));
             }
         };
         match api.update_document_content(id, &content).await {
@@ -100,8 +177,8 @@ pub async fn publish(
                         format!("Published, but reloading the document failed: {e}"),
                     )
                 })?;
-                store.settle(&stored, &local, update.markdown_is_fallback)?;
-                return Ok(PublishOutcome::Published);
+                store.settle(&stored, local, update.markdown_is_fallback)?;
+                return Ok((outcome, None));
             }
             // Backlog has no conditional update. A 409 says the document changed while it was
             // sent, so start over from the fetch.
@@ -113,6 +190,56 @@ pub async fn publish(
         ErrorKind::Api,
         "the document kept changing on Backlog while publishing; try again",
     ))
+}
+
+/// "Bring in Backlog's changes": fetches the document and merges Backlog's changes into the
+/// local edits. Overlapping changes are returned as a proposal and change nothing.
+pub async fn pull(
+    api: &impl DocumentApi,
+    store: &Store,
+    id: &str,
+) -> Result<(PullOutcome, Option<MergeProposal>), CommandError> {
+    let doc = store.document(id)?.ok_or_else(CommandError::not_stored)?;
+    let remote = api.document(id).await?;
+    let unchanged = snapshot(&remote) == base_snapshot(&doc);
+    // Keeps the base when there are local edits; adopts Backlog's body otherwise.
+    store.put_document(&remote)?;
+    let Some(local) = doc.local_plain.as_deref() else {
+        let outcome = if unchanged {
+            PullOutcome::UpToDate
+        } else {
+            PullOutcome::Updated
+        };
+        return Ok((outcome, None));
+    };
+    if unchanged {
+        return Ok((PullOutcome::UpToDate, None));
+    }
+    let remote_plain = remote.plain.as_deref().unwrap_or_default();
+    let chunks = merge(base_snapshot(&doc).plain, local, remote_plain);
+    match clean(&chunks) {
+        Some(merged) => {
+            store.rebase(
+                id,
+                remote_plain,
+                &remote.updated,
+                &merged,
+                VersionReason::BeforeMerge,
+            )?;
+            Ok((PullOutcome::Merged, None))
+        }
+        None => Ok((
+            PullOutcome::NeedsMerge,
+            Some(MergeProposal::new(chunks, &remote)),
+        )),
+    }
+}
+
+fn base_snapshot(doc: &StoredDocument) -> Snapshot<'_> {
+    Snapshot {
+        plain: doc.base_plain.as_deref().unwrap_or_default(),
+        updated: doc.base_updated.as_deref().unwrap_or_default(),
+    }
 }
 
 fn snapshot(doc: &Document) -> Snapshot<'_> {
@@ -131,6 +258,7 @@ mod tests {
 
     use super::*;
     use crate::commands::{SyncState, document_view};
+    use crate::store::VersionReason;
 
     const T1: &str = "2026-11-20T01:00:00Z";
     const T2: &str = "2026-11-20T01:05:00Z";
@@ -243,7 +371,7 @@ mod tests {
     fn publishes_the_edits_and_adopts_the_stored_body() {
         let store = edited_store();
         let backlog = FakeBacklog::new("a", T1);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
         assert_eq!(outcome, PublishOutcome::Published);
         assert_eq!(backlog.sent(), ["a b"]);
         let view = document_view(&store, "d1").unwrap();
@@ -253,39 +381,113 @@ mod tests {
         assert_eq!(view.state, SyncState::Synced);
     }
 
-    #[test]
-    fn remote_change_keeps_the_edits_as_a_conflict_copy() {
-        let store = edited_store();
-        let backlog = FakeBacklog::new("a c", T2);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
-        assert_eq!(outcome, PublishOutcome::Conflict);
-        assert!(backlog.sent().is_empty());
-        let view = document_view(&store, "d1").unwrap();
-        assert_eq!(view.plain.as_deref(), Some("a c"));
-        assert_eq!(view.local_plain, None);
-        assert_eq!(view.state, SyncState::Conflict);
-        assert_eq!(view.conflicts.len(), 1);
-        assert_eq!(view.conflicts[0].local_plain, "a b");
-        assert_eq!(view.conflicts[0].remote_plain, "a c");
+    const BASE: &str = "one\n\ntwo\n\nthree\n";
 
-        // The user reapplies the edits by hand, then marks the copy resolved.
-        store.save_local("d1", "a b c").unwrap();
+    /// A store whose document `d1` has base `BASE` at T1 and `local` as edits.
+    fn store_editing(local: &str) -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.put_document(&document(BASE, T1)).unwrap();
+        store.save_local("d1", local).unwrap();
+        store
+    }
+
+    #[test]
+    fn backlog_changes_elsewhere_are_merged_in_and_published() {
+        let store = store_editing("one, mine\n\ntwo\n\nthree\n");
+        let backlog = FakeBacklog::new("one\n\ntwo\n\nthree, theirs\n", T2);
+        let (outcome, proposal) = block_on(publish(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PublishOutcome::Merged);
+        assert_eq!(proposal, None);
+        assert_eq!(backlog.sent(), ["one, mine\n\ntwo\n\nthree, theirs\n"]);
+        let view = document_view(&store, "d1").unwrap();
+        assert_eq!(view.local_plain, None);
+        assert_eq!(view.state, SyncState::Synced);
+        // The edits as they were before the merge are kept.
+        let versions = store.versions("d1").unwrap();
+        assert_eq!(versions[0].plain, "one, mine\n\ntwo\n\nthree\n");
+        assert_eq!(versions[0].reason, VersionReason::BeforeMerge);
+    }
+
+    #[test]
+    fn overlapping_changes_send_nothing_and_keep_the_edits() {
+        let store = store_editing("one\n\ntwo, mine\n\nthree\n");
+        let backlog = FakeBacklog::new("one\n\ntwo, theirs\n\nthree\n", T2);
+        let (outcome, proposal) = block_on(publish(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PublishOutcome::NeedsMerge);
+        assert!(backlog.sent().is_empty());
+        let proposal = proposal.unwrap();
+        assert_eq!(proposal.remote_updated, T2);
+        assert!(proposal.chunks.contains(&MergeChunk::Conflict {
+            local: "two, mine\n".into(),
+            remote: "two, theirs\n".into(),
+        }));
+        let view = document_view(&store, "d1").unwrap();
         assert_eq!(
-            document_view(&store, "d1").unwrap().state,
-            SyncState::Conflict
+            view.local_plain.as_deref(),
+            Some("one\n\ntwo, mine\n\nthree\n")
         );
-        store.resolve_conflict("d1", view.conflicts[0].id).unwrap();
+        assert_eq!(view.plain.as_deref(), Some(BASE));
+        assert_eq!(view.state, SyncState::Edited);
+    }
+
+    #[test]
+    fn pull_merges_backlog_changes_into_the_edits() {
+        let store = store_editing("one, mine\n\ntwo\n\nthree\n");
+        let backlog = FakeBacklog::new("one\n\ntwo\n\nthree, theirs\n", T2);
+        let (outcome, _) = block_on(pull(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PullOutcome::Merged);
+        let view = document_view(&store, "d1").unwrap();
+        assert_eq!(view.plain.as_deref(), Some("one\n\ntwo\n\nthree, theirs\n"));
+        assert_eq!(view.updated.as_deref(), Some(T2));
         assert_eq!(
-            document_view(&store, "d1").unwrap().state,
-            SyncState::Edited
+            view.local_plain.as_deref(),
+            Some("one, mine\n\ntwo\n\nthree, theirs\n")
         );
+        assert_eq!(
+            store.versions("d1").unwrap()[0].plain,
+            "one, mine\n\ntwo\n\nthree\n"
+        );
+        // Publishing now sends the merged body without another merge.
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PublishOutcome::Published);
+    }
+
+    #[test]
+    fn pull_with_overlaps_changes_nothing() {
+        let store = store_editing("one\n\ntwo, mine\n\nthree\n");
+        let backlog = FakeBacklog::new("one\n\ntwo, theirs\n\nthree\n", T2);
+        let (outcome, proposal) = block_on(pull(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PullOutcome::NeedsMerge);
+        assert!(proposal.is_some());
+        let view = document_view(&store, "d1").unwrap();
+        assert_eq!(
+            view.local_plain.as_deref(),
+            Some("one\n\ntwo, mine\n\nthree\n")
+        );
+        assert_eq!(view.plain.as_deref(), Some(BASE));
+        assert_eq!(store.version_count("d1").unwrap(), 0);
+    }
+
+    #[test]
+    fn pull_without_edits_shows_backlogs_body() {
+        let store = Store::open_in_memory().unwrap();
+        store.put_document(&document(BASE, T1)).unwrap();
+        let backlog = FakeBacklog::new("new\n", T2);
+        let (outcome, _) = block_on(pull(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PullOutcome::Updated);
+        assert_eq!(
+            document_view(&store, "d1").unwrap().plain.as_deref(),
+            Some("new\n")
+        );
+        let (outcome, _) = block_on(pull(&backlog, &store, "d1")).unwrap();
+        assert_eq!(outcome, PullOutcome::UpToDate);
     }
 
     #[test]
     fn nothing_to_send_when_backlog_already_has_the_edits() {
         let store = edited_store();
         let backlog = FakeBacklog::new("a b", T2);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
         assert_eq!(outcome, PublishOutcome::NothingToSend);
         assert!(backlog.sent().is_empty());
         let view = document_view(&store, "d1").unwrap();
@@ -298,7 +500,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         store.put_document(&document("a", T1)).unwrap();
         let backlog = FakeBacklog::new("a", T1);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
         assert_eq!(outcome, PublishOutcome::NothingToSend);
         assert!(backlog.sent().is_empty());
     }
@@ -307,7 +509,7 @@ mod tests {
     fn concurrent_edit_error_retries() {
         let store = edited_store();
         let backlog = FakeBacklog::new("a", T1).reply([Reply::Fail(409)]);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
         assert_eq!(outcome, PublishOutcome::Published);
         assert_eq!(backlog.sent(), ["a b", "a b"]);
     }
@@ -316,11 +518,12 @@ mod tests {
     fn retry_starts_over_from_the_fetch() {
         let store = edited_store();
         let backlog = FakeBacklog::new("a", T1).reply([Reply::LoseRace("a c")]);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
-        assert_eq!(outcome, PublishOutcome::Conflict);
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
+        // Backlog now has "a c", which overlaps the local "a b": nothing more is sent.
+        assert_eq!(outcome, PublishOutcome::NeedsMerge);
         assert_eq!(backlog.sent(), ["a b"]);
         let view = document_view(&store, "d1").unwrap();
-        assert_eq!(view.conflicts[0].remote_plain, "a c");
+        assert_eq!(view.local_plain.as_deref(), Some("a b"));
     }
 
     #[test]
@@ -350,7 +553,7 @@ mod tests {
     fn fallback_update_makes_the_document_read_only() {
         let store = edited_store();
         let backlog = FakeBacklog::new("a", T1).reply([Reply::AcceptWithFallback]);
-        let outcome = block_on(publish(&backlog, &store, "d1")).unwrap();
+        let (outcome, _) = block_on(publish(&backlog, &store, "d1")).unwrap();
         assert_eq!(outcome, PublishOutcome::Published);
         let view = document_view(&store, "d1").unwrap();
         assert!(view.read_only);

@@ -4,6 +4,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { EDITING, READ_ONLY_PAGE, sampleSpace } from "../src/dev/fixtures.ts";
 import { createMockBackend, type MockPage, REMOTE_EDIT } from "../src/dev/mockBackend.ts";
+import { assemble, conflicts } from "../src/merge.ts";
 import { roundTrip } from "./harness.ts";
 
 const BASE = EDITING;
@@ -70,34 +71,80 @@ test("publish without edits, or when Backlog already has them, sends nothing", a
   assert.equal(document.plain, MINE);
 });
 
-test("a change on Backlog turns the edits into a conflict copy until it is resolved", async () => {
-  const backend = await opened();
-  await backend.invoke("save_local", { documentId: "editing", markdown: MINE });
-  backend.remoteChanges("editing", "theirs");
-  const { outcome, document } = await backend.invoke("publish_document", { documentId: "editing" });
-  assert.equal(outcome, "conflict");
-  assert.equal(document.state, "conflict");
-  assert.equal(document.plain, "theirs");
-  assert.equal(document.localPlain, null);
-  assert.equal(document.conflicts.length, 1);
-  assert.equal(document.conflicts[0].localPlain, MINE);
-  assert.equal(document.conflicts[0].remotePlain, "theirs");
+/** Local edits to the first line, which Backlog's appended paragraph does not touch. */
+const FIRST_LINE_EDIT = BASE.replace("Edit this text", "Edit this text (mine)");
 
-  const resolved = await backend.invoke("resolve_conflict", { documentId: "editing", copyId: document.conflicts[0].id });
-  assert.equal(resolved.state, "synced");
-  assert.deepEqual(resolved.conflicts, []);
-});
-
-test("conflictOnNextPublish: the next publish conflicts, the one after goes through", async () => {
+test("publishing merges Backlog's changes elsewhere and keeps the edits from before the merge", async () => {
   const backend = await opened();
   backend.conflictOnNextPublish();
+  await backend.invoke("save_local", { documentId: "editing", markdown: FIRST_LINE_EDIT });
+  const { outcome, document, merge } = await backend.invoke("publish_document", { documentId: "editing" });
+  assert.equal(outcome, "merged");
+  assert.equal(merge, null);
+  assert.equal(document.plain, `${FIRST_LINE_EDIT}\n\n${REMOTE_EDIT}`);
+  assert.equal(document.state, "synced");
+  const versions = await backend.invoke("list_versions", { documentId: "editing" });
+  assert.equal(versions[0].plain, FIRST_LINE_EDIT);
+  assert.equal(versions[0].reason, "beforeMerge");
+});
+
+test("overlapping changes send nothing until the user decides, then publish", async () => {
+  const backend = await opened();
+  backend.conflictOnNextPublish();
+  // Both sides append at the end: that place needs a decision.
   await backend.invoke("save_local", { documentId: "editing", markdown: MINE });
   const first = await backend.invoke("publish_document", { documentId: "editing" });
-  assert.equal(first.outcome, "conflict");
-  assert.equal(first.document.plain, `${BASE}\n\n${REMOTE_EDIT}`);
+  assert.equal(first.outcome, "needsMerge");
+  assert.equal(first.document.localPlain, MINE, "the edits stay");
+  assert.equal(first.document.plain, BASE, "the base stays");
+  const proposal = first.merge!;
+  const decided = assemble(proposal.chunks, conflicts(proposal.chunks).map(() => "both" as const))!;
+  assert.ok(decided.includes("mine") && decided.includes(REMOTE_EDIT));
 
-  await backend.invoke("save_local", { documentId: "editing", markdown: `${first.document.plain}\n\nmine again` });
-  assert.equal((await backend.invoke("publish_document", { documentId: "editing" })).outcome, "published");
+  const applied = await backend.invoke("apply_merge", {
+    documentId: "editing",
+    markdown: decided,
+    remotePlain: proposal.remotePlain,
+    remoteUpdated: proposal.remoteUpdated,
+  });
+  assert.equal(applied.localPlain, decided);
+  assert.equal(applied.plain, proposal.remotePlain);
+  assert.equal(applied.versionCount, 1);
+  const second = await backend.invoke("publish_document", { documentId: "editing" });
+  assert.equal(second.outcome, "published");
+  assert.equal(second.document.plain, decided);
+});
+
+test("pull brings Backlog's changes into the edits, or loads them when there are none", async () => {
+  const backend = await opened();
+  backend.remoteChanges("editing", `${BASE}\n\ntheirs`);
+  await backend.invoke("save_local", { documentId: "editing", markdown: FIRST_LINE_EDIT });
+  const merged = await backend.invoke("pull_document", { documentId: "editing" });
+  assert.equal(merged.outcome, "merged");
+  assert.equal(merged.document.localPlain, `${FIRST_LINE_EDIT}\n\ntheirs`);
+  assert.equal(merged.document.plain, `${BASE}\n\ntheirs`);
+  assert.equal((await backend.invoke("pull_document", { documentId: "editing" })).outcome, "upToDate");
+
+  const other = await opened();
+  other.remoteChanges("editing", "theirs only");
+  const updated = await other.invoke("pull_document", { documentId: "editing" });
+  assert.equal(updated.outcome, "updated");
+  assert.equal(updated.document.plain, "theirs only");
+});
+
+test("discarding and restoring never lose text", async () => {
+  const backend = await opened();
+  await backend.invoke("save_local", { documentId: "editing", markdown: "a lot of writing" });
+  await backend.invoke("discard_local", { documentId: "editing" });
+  await backend.invoke("save_local", { documentId: "editing", markdown: "newer writing" });
+  const [discarded] = await backend.invoke("list_versions", { documentId: "editing" });
+  assert.equal(discarded.plain, "a lot of writing");
+  assert.equal(discarded.reason, "discarded");
+  const restored = await backend.invoke("restore_version", { documentId: "editing", versionId: discarded.id });
+  assert.equal(restored.localPlain, "a lot of writing");
+  const versions = await backend.invoke("list_versions", { documentId: "editing" });
+  assert.equal(versions[0].plain, "newer writing");
+  assert.equal(versions[0].reason, "beforeRestore");
 });
 
 test("offline: reads come from the cache, uncached reads and publishing fail, edits stay", async () => {
@@ -191,4 +238,18 @@ test("create_document needs a title and Backlog", async () => {
   await rejectsWith(backend.invoke("create_document", { projectId, title: "   ", parentId: null }), "invalidInput");
   backend.setOffline(true);
   await rejectsWith(backend.invoke("create_document", { projectId, title: "x", parentId: null }), "offline");
+});
+
+test("recent_documents lists the project's newest documents first and notices remote changes", async () => {
+  const backend = createMockBackend(sampleSpace);
+  const projectId = sampleSpace.projects[0].project.id;
+  const before = await backend.invoke("recent_documents", { projectId, count: 3 });
+  assert.equal(before.length, 3);
+  const times = before.map((x) => Date.parse(x.updated));
+  assert.deepEqual(times, [...times].sort((a, b) => b - a));
+  backend.remoteChanges("editing", "changed on Backlog");
+  const after = await backend.invoke("recent_documents", { projectId, count: 3 });
+  assert.equal(after[0].id, "editing");
+  backend.setOffline(true);
+  await rejectsWith(backend.invoke("recent_documents", { projectId, count: 3 }), "offline");
 });
