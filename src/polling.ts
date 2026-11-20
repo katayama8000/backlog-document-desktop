@@ -1,17 +1,19 @@
 // Notices changes made on Backlog by polling the project's most recently updated documents.
 //
-// One small request a minute (a "Read" request under Backlog's per-user, per-minute rate limit),
-// only while the window is focused, plus one when it regains focus. Components subscribe with
+// One small request every 30 s (a "Read" request under Backlog's per-user, per-minute rate
+// limit) while the window is visible, even when another app has focus: you may be editing in
+// Backlog in a browser and watching this window. Coming back to the window polls at once.
+// Focus is not used: the macOS webview does not report it reliably. Components subscribe with
 // `usePollResults` and decide what a change means for them.
 
 import { useEffect, useRef } from "react";
 import { api, isCommandError } from "./api";
 import {
-  FOCUS_MIN_GAP_MS,
   POLL_COUNT,
   POLL_INTERVAL_MS,
   type PollResult,
   RATE_LIMITED_DELAY_MS,
+  RETURN_MIN_GAP_MS,
   changedSince,
   latestUpdate,
 } from "./remoteChanges";
@@ -32,7 +34,7 @@ export function usePollResults(listener: Listener): void {
   }, []);
 }
 
-/** Polls the project while the window is focused. Mount once, in the app. */
+/** Polls the project while the window is visible. Mount once, in the app. */
 export function usePolling(projectId: bigint | null): void {
   useEffect(() => {
     if (projectId === null) return;
@@ -46,7 +48,7 @@ export function usePolling(projectId: bigint | null): void {
 
     const schedule = (delay: number) => {
       clearTimeout(timer);
-      if (!stopped && document.hasFocus()) timer = setTimeout(poll, delay);
+      if (!stopped && document.visibilityState === "visible") timer = setTimeout(poll, delay);
     };
 
     async function poll() {
@@ -72,21 +74,25 @@ export function usePolling(projectId: bigint | null): void {
       }
     }
 
-    const onFocus = () => {
+    /** Back in the window (or shown again): poll now, or schedule the next poll. */
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") {
+        clearTimeout(timer);
+        return;
+      }
       const now = Date.now();
-      if (now >= notBefore && now - lastPoll >= FOCUS_MIN_GAP_MS) poll();
+      if (now >= notBefore && now - lastPoll >= RETURN_MIN_GAP_MS) poll();
       else schedule(Math.max(notBefore - now, lastPoll + POLL_INTERVAL_MS - now, 0));
     };
-    const onBlur = () => clearTimeout(timer);
 
     poll();
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     return () => {
       stopped = true;
       clearTimeout(timer);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
     };
   }, [projectId]);
 }
