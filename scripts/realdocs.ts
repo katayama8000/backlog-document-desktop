@@ -12,7 +12,8 @@ const rows: { title: string; base_plain: string }[] = JSON.parse(
 );
 let identical = 0;
 for (const { title, base_plain } of rows) {
-  const diff = lineDiff(base_plain.trimEnd(), roundTrip(base_plain).out.trimEnd()).filter((l) => l.op !== "same");
+  // Byte for byte: the editor allows editing only when the text comes back unchanged.
+  const diff = lineDiff(base_plain, roundTrip(base_plain).out).filter((l) => l.op !== "same");
   if (diff.length === 0) identical++;
   else console.log(`${title}: ${diff.length} lines differ`);
 }
