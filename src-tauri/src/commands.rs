@@ -3,7 +3,9 @@
 use std::future::Future;
 
 use backlog_api::oauth::{self as backlog_oauth, Attempt, OAuthApp, TokenSet};
-use backlog_api::{Auth, Client, DocumentTree, OAuthSession, Project, SpaceUrl, User};
+use backlog_api::{
+    Auth, Client, DocumentSummary, DocumentTree, OAuthSession, Project, SpaceUrl, User,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tauri::{AppHandle, State};
@@ -367,6 +369,18 @@ pub async fn create_document(
         .await?;
     state.store.put_document(&doc)?;
     document_view(&state.store, &doc.id)
+}
+
+/// The project's `count` most recently updated documents, newest first, straight from Backlog
+/// (never cached). Polled to notice changes made on Backlog.
+#[tauri::command]
+pub async fn recent_documents(
+    state: State<'_, AppState>,
+    project_id: i64,
+    count: u8,
+) -> CommandResult<Vec<DocumentSummary>> {
+    let client = state.client()?;
+    Ok(client.recent_documents(project_id, count).await?)
 }
 
 /// Keeps the editor's Markdown as the document's local edits.

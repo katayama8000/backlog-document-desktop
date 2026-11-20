@@ -4,6 +4,7 @@
 import type { CommandError } from "../bindings/CommandError.ts";
 import type { ConflictCopy } from "../bindings/ConflictCopy.ts";
 import type { Document } from "../bindings/Document.ts";
+import type { DocumentSummary } from "../bindings/DocumentSummary.ts";
 import type { DocumentTree } from "../bindings/DocumentTree.ts";
 import type { DocumentView } from "../bindings/DocumentView.ts";
 import type { ErrorKind } from "../bindings/ErrorKind.ts";
@@ -43,6 +44,7 @@ export type MockCommands = {
   get_tree: { args: { projectKey: string }; result: Fetched<DocumentTree> };
   get_document: { args: { documentId: string }; result: Fetched<DocumentView> };
   create_document: { args: { projectId: bigint; title: string; parentId: string | null }; result: DocumentView };
+  recent_documents: { args: { projectId: bigint; count: number }; result: DocumentSummary[] };
   save_local: { args: { documentId: string; markdown: string }; result: DocumentView };
   discard_local: { args: { documentId: string }; result: null };
   publish_document: { args: { documentId: string }; result: PublishResult };
@@ -314,6 +316,14 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
       putDocument(doc);
       return view(doc.id);
     },
+    recent_documents: ({ projectId, count }) =>
+      backlog(() =>
+        [...remote.values()]
+          .filter((d) => d.projectId === projectId)
+          .sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
+          .slice(0, Math.min(Math.max(count, 1), 100))
+          .map(({ id, title, updated }) => ({ id, title, updated })),
+      ),
     save_local: ({ documentId, markdown }) => {
       const doc = storedDocument(documentId);
       doc.localPlain = (doc.base.plain ?? "") === markdown ? null : markdown;

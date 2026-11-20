@@ -209,3 +209,17 @@ test("create_document needs a title and Backlog", async () => {
   backend.setOffline(true);
   await rejectsWith(backend.invoke("create_document", { projectId, title: "x", parentId: null }), "offline");
 });
+
+test("recent_documents lists the project's newest documents first and notices remote changes", async () => {
+  const backend = createMockBackend(sampleSpace);
+  const projectId = sampleSpace.projects[0].project.id;
+  const before = await backend.invoke("recent_documents", { projectId, count: 3 });
+  assert.equal(before.length, 3);
+  const times = before.map((x) => Date.parse(x.updated));
+  assert.deepEqual(times, [...times].sort((a, b) => b - a));
+  backend.remoteChanges("editing", "changed on Backlog");
+  const after = await backend.invoke("recent_documents", { projectId, count: 3 });
+  assert.equal(after[0].id, "editing");
+  backend.setOffline(true);
+  await rejectsWith(backend.invoke("recent_documents", { projectId, count: 3 }), "offline");
+});

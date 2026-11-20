@@ -1,6 +1,7 @@
 // Typed wrappers around Tauri commands (see src-tauri/src/commands.rs).
 import { invoke } from "@tauri-apps/api/core";
 import type { CommandError } from "./bindings/CommandError";
+import type { DocumentSummary } from "./bindings/DocumentSummary";
 import type { DocumentTree } from "./bindings/DocumentTree";
 import type { DocumentView } from "./bindings/DocumentView";
 import type { Fetched } from "./bindings/Fetched";
@@ -46,6 +47,8 @@ export const api = {
     tracked(invoke<Fetched<DocumentView>>("get_document", { documentId })),
   createDocument: (projectId: bigint, title: string, parentId: string | null) =>
     tracked(invoke<DocumentView>("create_document", { projectId, title, parentId })),
+  recentDocuments: (projectId: bigint, count: number) =>
+    tracked(invoke<DocumentSummary[]>("recent_documents", { projectId, count })),
   saveLocal: (documentId: string, markdown: string) =>
     invoke<DocumentView>("save_local", { documentId, markdown }),
   discardLocal: (documentId: string) => invoke<void>("discard_local", { documentId }),
@@ -67,6 +70,8 @@ export function errorMessage(e: unknown): string {
       return "Backlog rejected the sign-in. Sign in again.";
     case "offline":
       return "Cannot reach the server, and nothing is cached.";
+    case "rateLimited":
+      return "Backlog's API rate limit was reached. Try again in a minute.";
     case "notConfigured":
       return "Connection settings are missing.";
     default:

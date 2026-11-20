@@ -9,4 +9,4 @@ mod types;
 pub use client::{Auth, Client, FileContent, OAuthSession};
 pub use error::{ApiErrorItem, Error};
 pub use space_url::SpaceUrl;
-pub use types::{ContentUpdate, Document, DocumentTree, Project, TreeNode, User};
+pub use types::{ContentUpdate, Document, DocumentSummary, DocumentTree, Project, TreeNode, User};
