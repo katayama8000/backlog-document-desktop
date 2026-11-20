@@ -1,0 +1,7 @@
+[package]
+name = "doc-sync-engine"
+description = "Sync decisions for Backlog documents (pure functions, no I/O)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 backlog-api = { path = "../crates/backlog-api" }
+doc-sync-engine = { path = "../crates/doc-sync-engine" }
 keyring = "4"
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde.workspace = true

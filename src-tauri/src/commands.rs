@@ -11,7 +11,8 @@ use ts_rs::TS;
 use crate::error::{CommandError, ErrorKind};
 use crate::secrets;
 use crate::state::AppState;
-use crate::store::{PROJECT_KEY, SPACE_URL, StoredDocument};
+use crate::store::{ConflictCopy, PROJECT_KEY, SPACE_URL, Store, StoredDocument};
+use crate::sync::{self, PublishOutcome};
 
 type CommandResult<T> = Result<T, CommandError>;
 
@@ -43,22 +44,69 @@ pub struct DocumentView {
     pub id: String,
     pub project_id: i64,
     pub title: String,
-    /// Normalized Pandoc Markdown returned by Backlog.
+    /// Normalized Pandoc Markdown returned by Backlog: the base that local edits start from.
     pub plain: Option<String>,
     /// ISO 8601
     pub updated: Option<String>,
+    /// Local edits not yet published.
+    pub local_plain: Option<String>,
+    /// Backlog could not regenerate the Markdown after the last publish, so `plain` may be
+    /// stale. Editing stays off until a fetch returns a different body.
+    pub read_only: bool,
+    /// Unresolved conflict copies, oldest first.
+    pub conflicts: Vec<ConflictCopy>,
+    pub state: SyncState,
 }
 
-impl From<StoredDocument> for DocumentView {
-    fn from(d: StoredDocument) -> Self {
+/// Derived from the stored data, never stored itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SyncState {
+    /// No local edits and no unresolved conflict copy.
+    Synced,
+    /// Local edits not yet published.
+    Edited,
+    /// A conflict copy is unresolved. There may be local edits too.
+    Conflict,
+}
+
+impl DocumentView {
+    fn new(d: StoredDocument, conflicts: Vec<ConflictCopy>) -> Self {
+        let state = if !conflicts.is_empty() {
+            SyncState::Conflict
+        } else if d.local_plain.is_some() {
+            SyncState::Edited
+        } else {
+            SyncState::Synced
+        };
         Self {
             id: d.id,
             project_id: d.project_id,
             title: d.title,
             plain: d.base_plain,
             updated: d.base_updated,
+            local_plain: d.local_plain,
+            read_only: d.read_only,
+            conflicts,
+            state,
         }
     }
+}
+
+/// Builds the view of a stored document.
+pub(crate) fn document_view(store: &Store, id: &str) -> CommandResult<DocumentView> {
+    let doc = store.document(id)?.ok_or_else(CommandError::not_stored)?;
+    Ok(DocumentView::new(doc, store.conflict_copies(id)?))
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PublishResult {
+    pub outcome: PublishOutcome,
+    /// The document after publishing. Show its local edits, or its base when there are none.
+    pub document: DocumentView,
 }
 
 /// Loads saved settings and prepares the API client when possible.
@@ -138,25 +186,64 @@ pub async fn get_document(
     document_id: String,
 ) -> CommandResult<Fetched<DocumentView>> {
     let client = state.client()?;
-    match client.document(&document_id).await {
-        Ok(doc) => {
-            let stored = state.store.put_document(&doc)?;
-            Ok(Fetched {
-                fetched_at: stored.fetched_at.clone(),
-                data: stored.into(),
-                from_cache: false,
-            })
-        }
+    let (stored, from_cache) = match client.document(&document_id).await {
+        Ok(doc) => (state.store.put_document(&doc)?, false),
         Err(e) if e.is_offline() => match state.store.document(&document_id)? {
-            Some(stored) => Ok(Fetched {
-                fetched_at: stored.fetched_at.clone(),
-                data: stored.into(),
-                from_cache: true,
-            }),
-            None => Err(e.into()),
+            Some(stored) => (stored, true),
+            None => return Err(e.into()),
         },
-        Err(e) => Err(e.into()),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(Fetched {
+        fetched_at: stored.fetched_at.clone(),
+        data: DocumentView::new(stored, state.store.conflict_copies(&document_id)?),
+        from_cache,
+    })
+}
+
+/// Keeps the editor's Markdown as the document's local edits.
+#[tauri::command]
+pub fn save_local(
+    state: State<'_, AppState>,
+    document_id: String,
+    markdown: String,
+) -> CommandResult<DocumentView> {
+    if !state.store.save_local(&document_id, &markdown)? {
+        return Err(CommandError::not_stored());
     }
+    document_view(&state.store, &document_id)
+}
+
+/// Drops the local edits. Fetch the document again to show the current body.
+#[tauri::command]
+pub fn discard_local(state: State<'_, AppState>, document_id: String) -> CommandResult<()> {
+    state.store.discard_local(&document_id)?;
+    Ok(())
+}
+
+/// "Publish to Backlog" (design §6.3).
+#[tauri::command]
+pub async fn publish_document(
+    state: State<'_, AppState>,
+    document_id: String,
+) -> CommandResult<PublishResult> {
+    let client = state.client()?;
+    let outcome = sync::publish(&client, &state.store, &document_id).await?;
+    Ok(PublishResult {
+        outcome,
+        document: document_view(&state.store, &document_id)?,
+    })
+}
+
+/// Marks a conflict copy as dealt with.
+#[tauri::command]
+pub fn resolve_conflict(
+    state: State<'_, AppState>,
+    document_id: String,
+    copy_id: i64,
+) -> CommandResult<DocumentView> {
+    state.store.resolve_conflict(&document_id, copy_id)?;
+    document_view(&state.store, &document_id)
 }
 
 /// Fetches from the API and caches the result; falls back to the cache when offline.
