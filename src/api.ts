@@ -7,8 +7,10 @@ import type { DocumentView } from "./bindings/DocumentView";
 import type { Fetched } from "./bindings/Fetched";
 import type { Project } from "./bindings/Project";
 import type { PublishResult } from "./bindings/PublishResult";
+import type { PullResult } from "./bindings/PullResult";
 import type { Settings } from "./bindings/Settings";
 import type { User } from "./bindings/User";
+import type { Version } from "./bindings/Version";
 import { reportOutcome } from "./connection";
 
 /** Runs a Backlog call and reports whether it reached Backlog (see connection.ts). */
@@ -54,8 +56,12 @@ export const api = {
   discardLocal: (documentId: string) => invoke<void>("discard_local", { documentId }),
   publishDocument: (documentId: string) =>
     tracked(invoke<PublishResult>("publish_document", { documentId })),
-  resolveConflict: (documentId: string, copyId: number) =>
-    invoke<DocumentView>("resolve_conflict", { documentId, copyId }),
+  pullDocument: (documentId: string) => tracked(invoke<PullResult>("pull_document", { documentId })),
+  applyMerge: (documentId: string, markdown: string, remotePlain: string, remoteUpdated: string) =>
+    invoke<DocumentView>("apply_merge", { documentId, markdown, remotePlain, remoteUpdated }),
+  listVersions: (documentId: string) => invoke<Version[]>("list_versions", { documentId }),
+  restoreVersion: (documentId: string, versionId: number) =>
+    invoke<DocumentView>("restore_version", { documentId, versionId }),
 };
 
 export function isCommandError(e: unknown): e is CommandError {

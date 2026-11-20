@@ -2,9 +2,10 @@ import { Markdown } from "@tiptap/markdown";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, isCommandError } from "../api";
-import type { ConflictCopy } from "../bindings/ConflictCopy";
 import type { DocumentView } from "../bindings/DocumentView";
+import type { MergeProposal } from "../bindings/MergeProposal";
 import type { PublishResult } from "../bindings/PublishResult";
+import type { PullResult } from "../bindings/PullResult";
 import type { TreeNode } from "../bindings/TreeNode";
 import { useConnection } from "../connection";
 import { type EditorStatus, type Indicator, hasEdits, indicator, publishBlocker, readOnlyReason } from "../editing";
@@ -17,8 +18,10 @@ import "../markdown/image.css";
 import "../markdown/inline.css";
 import { usePollResults } from "../polling";
 import { POLL_COUNT, formatAgo, remoteStatus } from "../remoteChanges";
+import { MergePanel } from "./MergePanel";
 import { formatTime } from "./Sidebar";
 import { useLocalSave } from "./useLocalSave";
+import { VersionsPanel } from "./VersionsPanel";
 
 type Props = {
   documentId: string;
@@ -33,7 +36,7 @@ const LABELS: Record<Indicator, string> = {
   synced: "Synced",
   edited: "Edited",
   publishing: "Publishing…",
-  conflict: "Conflict",
+  merging: "Needs your decision",
   readOnly: "Read-only",
 };
 
@@ -52,8 +55,11 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   /** Backlog's `updated` for a newer version that wasn't loaded because there are local edits. */
   const [newerOnBacklog, setNewerOnBacklog] = useState<string | null>(null);
-  /** Loading a newer version from Backlog; editing is off meanwhile. */
-  const [refreshing, setRefreshing] = useState(false);
+  /** Talking to Backlog or the store about the body (reload, bring in, merge, restore); editing is off meanwhile. */
+  const [busy, setBusy] = useState(false);
+  /** Overlapping changes waiting for the user's decisions; editing is off meanwhile. */
+  const [proposal, setProposal] = useState<MergeProposal | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
   /** The newest remote version a poll has already acted on. */
   const handledRemote = useRef<string | null>(null);
   const now = useNow(30_000);
@@ -104,11 +110,12 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       ? {
           readOnly: readOnlyReason(doc, roundTrip.output === roundTrip.original),
           publishing,
+          merging: proposal !== null,
           unsaved: saver.unsaved,
           online,
         }
       : null;
-  const editable = status !== null && status.readOnly === null && !publishing && !refreshing;
+  const editable = status !== null && status.readOnly === null && !publishing && !busy && proposal === null;
 
   useEffect(() => {
     editor?.setEditable(editable, false);
@@ -129,7 +136,7 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
 
   // A poll found that Backlog may have a newer version of this document.
   usePollResults((poll) => {
-    if (!doc || !editor || publishing || refreshing) return;
+    if (!doc || !editor || publishing || busy || proposal) return;
     const remote = remoteStatus(poll.recent, POLL_COUNT, documentId, doc.updated);
     if (remote.kind === "same") {
       setLastSynced(poll.at);
@@ -142,7 +149,7 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
 
   /**
    * Shows Backlog's newer version, unless the editor holds anything not yet published: then
-   * only says so, because loading it would hide those edits.
+   * offers to bring Backlog's changes in, because loading it would hide those edits.
    */
   async function loadNewer(updated: string) {
     if (!editor || !doc) return;
@@ -154,7 +161,7 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       setNewerOnBacklog(updated);
       return;
     }
-    setRefreshing(true);
+    setBusy(true);
     try {
       const fetched = await api.getDocument(documentId);
       setFromCache(fetched.fromCache);
@@ -164,7 +171,21 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       // The next poll tries again.
       handledRemote.current = null;
     } finally {
-      setRefreshing(false);
+      setBusy(false);
+    }
+  }
+
+  /** Runs a step that replaces the editor's text: saves typing first and keeps editing off meanwhile. */
+  async function replacing(step: () => Promise<void>) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await saver.flush();
+      await step();
+    } catch (e) {
+      setMessage({ tone: "error", text: `${errorMessage(e)} Your edits are kept.` });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -177,7 +198,8 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
       setLastSynced(new Date().toISOString());
       setNewerOnBacklog(null);
       show(result.document);
-      setMessage(outcomeMessage(result));
+      setProposal(result.merge);
+      setMessage(publishMessage(result));
     } catch (e) {
       const reason = isCommandError(e) && e.kind === "offline" ? "Cannot reach Backlog." : errorMessage(e);
       setMessage({ tone: "error", text: `Publishing failed: ${reason} Your edits are kept.` });
@@ -186,32 +208,61 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
     }
   }
 
-  async function discard() {
-    setConfirmDiscard(false);
-    setMessage(null);
-    saver.cancel();
-    try {
-      await saver.flush();
+  /** "Bring in Backlog's changes": merges them into the edits, or asks about overlaps. */
+  const bringIn = () =>
+    replacing(async () => {
+      const result = await api.pullDocument(documentId);
+      setLastSynced(new Date().toISOString());
+      setNewerOnBacklog(null);
+      show(result.document);
+      setProposal(result.merge);
+      setMessage(pullMessage(result));
+    });
+
+  const applyMerge = (markdown: string) =>
+    replacing(async () => {
+      if (!proposal) return;
+      const view = await api.applyMerge(documentId, markdown, proposal.remotePlain, proposal.remoteUpdated);
+      setProposal(null);
+      show(view);
+      setMessage({
+        tone: "ok",
+        text: "Merged. Check the text, then publish. Your edits from before the merge are in Previous versions.",
+      });
+    });
+
+  /** Leaves the overlaps undecided for now; the edits stay as they were. */
+  function postponeMerge() {
+    if (proposal) setNewerOnBacklog(proposal.remoteUpdated);
+    setProposal(null);
+  }
+
+  const restore = (versionId: number) =>
+    replacing(async () => {
+      const view = await api.restoreVersion(documentId, versionId);
+      show(view);
+      setMessage({ tone: "ok", text: "Restored into the editor. What it replaced is in Previous versions." });
+    });
+
+  const discard = () =>
+    replacing(async () => {
+      setConfirmDiscard(false);
+      saver.cancel();
       await api.discardLocal(documentId);
       const fetched = await api.getDocument(documentId);
       setFromCache(fetched.fromCache);
       setLastSynced(fetched.fetchedAt);
       setNewerOnBacklog(null);
       show(fetched.data);
-    } catch (e) {
-      setMessage({ tone: "error", text: errorMessage(e) });
-    }
-  }
-
-  function resolve(copy: ConflictCopy) {
-    api.resolveConflict(documentId, copy.id).then(setDoc, (e) => setMessage({ tone: "error", text: errorMessage(e) }));
-  }
+      setMessage({ tone: "ok", text: "Your edits were moved to Previous versions." });
+    });
 
   if (error) return <div className="center error">{error}</div>;
   if (!doc) return <div className="center muted">Loading…</div>;
 
   const state = status && indicator(doc, status);
   const blocker = status && publishBlocker(doc, status);
+  const idle = !publishing && !busy;
   return (
     <article className="document">
       <header className="document-header">
@@ -231,34 +282,48 @@ export function DocumentViewer({ documentId, tree, onOpen }: Props) {
               </span>
             )}
             <span className="spacer" />
+            {doc.versionCount > 0 && (
+              <button onClick={() => setVersionsOpen(!versionsOpen)} aria-expanded={versionsOpen}>
+                Previous versions ({doc.versionCount})
+              </button>
+            )}
             {hasEdits(doc, status) &&
-              !publishing &&
+              idle &&
+              !proposal &&
               (confirmDiscard ? (
                 <>
-                  <span className="small">Discard your edits?</span>
+                  <span className="small">Move your edits to Previous versions?</span>
                   <button onClick={discard}>Discard</button>
                   <button onClick={() => setConfirmDiscard(false)}>Keep</button>
                 </>
               ) : (
                 <button onClick={() => setConfirmDiscard(true)}>Discard edits</button>
               ))}
-            <button className="primary" disabled={blocker !== null} title={blocker ?? undefined} onClick={publish}>
+            <button className="primary" disabled={blocker !== null || busy} title={blocker ?? undefined} onClick={publish}>
               Publish to Backlog
             </button>
           </div>
         )}
         {status?.readOnly && <p className="sync-note">{status.readOnly}</p>}
-        {newerOnBacklog && (
-          <p className="sync-note sync-note-warn">
-            Someone updated this document on Backlog {formatAgo(newerOnBacklog, now)}, and you have unpublished
-            edits. Publishing keeps your version as a conflict copy; discarding your edits loads Backlog's version.
-          </p>
+        {newerOnBacklog && !proposal && (
+          <div className="sync-note sync-note-warn newer">
+            <span>Backlog has a newer version (updated {formatAgo(newerOnBacklog, now)}).</span>
+            <button onClick={bringIn} disabled={!idle || !online}>
+              Bring in Backlog's changes
+            </button>
+          </div>
         )}
         {saver.error && <p className="sync-note sync-note-error">{saver.error}</p>}
         {message && <p className={`sync-note sync-note-${message.tone}`}>{message.text}</p>}
-        {doc.conflicts.map((copy) => (
-          <ConflictNotice key={copy.id} copy={copy} onResolve={() => resolve(copy)} />
-        ))}
+        {proposal && <MergePanel proposal={proposal} busy={busy} onApply={applyMerge} onPostpone={postponeMerge} />}
+        {versionsOpen && doc.versionCount > 0 && (
+          <VersionsPanel
+            documentId={documentId}
+            count={doc.versionCount}
+            disabled={!idle || proposal !== null}
+            onRestore={restore}
+          />
+        )}
       </header>
       <EditorContent editor={editor} className="editor" />
       {import.meta.env.DEV && roundTrip !== null && <RoundTripReport original={roundTrip.original} roundTrip={roundTrip.output} />}
@@ -276,43 +341,33 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-function outcomeMessage({ outcome, document }: PublishResult): Message | null {
+function publishMessage({ outcome, document }: PublishResult): Message | null {
   switch (outcome) {
     case "published":
       return document.readOnly
         ? { tone: "warn", text: "Published, but Backlog could not regenerate the Markdown." }
         : { tone: "ok", text: "Published to Backlog." };
+    case "merged":
+      return { tone: "ok", text: "Published. Backlog's changes made meanwhile were merged in with yours." };
     case "nothingToSend":
       return { tone: "ok", text: "Nothing to publish: Backlog already has this text." };
-    case "conflict":
-      // The conflict notice explains it.
+    case "needsMerge":
+      // The merge panel explains it.
       return null;
   }
 }
 
-/** A conflict copy (design §6.3). ③c replaces this with a resolution screen. */
-function ConflictNotice({ copy, onResolve }: { copy: ConflictCopy; onResolve: () => void }) {
-  const [open, setOpen] = useState(false);
-  const diff = useMemo(() => (open ? lineDiff(copy.remotePlain, copy.localPlain) : []), [open, copy]);
-  return (
-    <div className="conflict">
-      <p>
-        Backlog changed while you were editing (updated {formatTime(copy.remoteUpdated)}). Your version was kept
-        as a conflict copy, and the editor now shows Backlog's version. Reapply your changes, then mark the copy
-        resolved.
-      </p>
-      <div className="row">
-        <button onClick={() => setOpen(!open)}>{open ? "Hide your version" : "Show your version"}</button>
-        <button onClick={onResolve}>Mark resolved</button>
-      </div>
-      {open && (
-        <>
-          <p className="small muted">Lines marked + are yours. Lines marked - are Backlog's.</p>
-          <Diff lines={diff} />
-        </>
-      )}
-    </div>
-  );
+function pullMessage({ outcome }: PullResult): Message | null {
+  switch (outcome) {
+    case "upToDate":
+      return { tone: "ok", text: "Backlog has nothing newer." };
+    case "updated":
+      return { tone: "ok", text: "Loaded Backlog's version." };
+    case "merged":
+      return { tone: "ok", text: "Brought in Backlog's changes. Your edits are kept; publish when ready." };
+    case "needsMerge":
+      return null;
+  }
 }
 
 function Diff({ lines }: { lines: DiffLine[] }) {

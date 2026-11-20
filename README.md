@@ -18,7 +18,7 @@ Available now:
 Planned:
 
 - WYSIWYG editing, published to Backlog when you click **Publish to Backlog**
-- Conflict-aware sync: the latest remote version is fetched and merged before publishing (conflict copies first, then three-way merge)
+- Conflict-aware sync: changes made on Backlog meanwhile are merged in by a three-way merge; where both sides changed the same lines you choose what to keep, and text that leaves the editor is always kept under *Previous versions*
 
 ## Install (macOS)
 
@@ -131,7 +131,7 @@ pnpm preview:mock
 
 opens the real UI in your browser at http://localhost:1430/preview.html, backed by an in-memory fake of the Tauri commands and a sample space (`src/dev/`). It needs no Backlog account, API key or Keychain, and nothing reaches Backlog. A "Mock preview" badge marks the page. Reloading starts over.
 
-URL switches, combinable: `?empty` (first-run settings screen), `?offline` (Backlog unreachable, everything cached), `?conflict` (the next publish finds a change made on Backlog), `?noOAuth` (a build without OAuth: API-key sign-in only), `?doc=<id>` (open a document, e.g. `?doc=forms` for the page with every Backlog form). In the console, `mockBackend` drives more scenarios, e.g. `mockBackend.remoteChanges("editing", "new text")`.
+URL switches, combinable: `?empty` (first-run settings screen), `?offline` (Backlog unreachable, everything cached), `?conflict` (the next publish finds a paragraph added on Backlog meanwhile), `?noOAuth` (a build without OAuth: API-key sign-in only), `?doc=<id>` (open a document, e.g. `?doc=forms` for the page with every Backlog form). In the console, `mockBackend` drives more scenarios, e.g. `mockBackend.remoteChanges("editing", "new text")`.
 
 ## Repository layout
 
