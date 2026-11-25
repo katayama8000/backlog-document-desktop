@@ -14,16 +14,18 @@ pub struct CommandError {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum ErrorKind {
-    /// Space URL or API key is not configured yet.
+    /// Space URL or credentials are not configured yet.
     NotConfigured,
     /// The input (e.g. space URL) is invalid.
     InvalidInput,
-    /// The API key was rejected.
+    /// The API key or OAuth tokens were rejected.
     Unauthorized,
     /// The server could not be reached and nothing is cached.
     Offline,
     /// Any other error response from the Backlog API.
     Api,
+    /// The user stopped the operation (e.g. closed sign-in).
+    Cancelled,
     /// Local failures (database, keychain, ...).
     Internal,
 }

@@ -145,6 +145,7 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 .settings label input { font-weight: 400; }
 .settings p { margin: 0; }
 .settings .row { justify-content: flex-end; }
+.settings .settings-switch { margin-right: auto; }
 
 /* Layout */
 .layout { display: flex; height: 100vh; }

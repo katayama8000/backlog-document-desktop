@@ -26,7 +26,7 @@ export default function App() {
       .loadSettings()
       .then((settings) =>
         setScreen(
-          settings.spaceUrl && settings.hasApiKey
+          settings.spaceUrl && settings.signedIn
             ? { kind: "main", settings }
             : { kind: "settings", settings },
         ),
@@ -46,13 +46,14 @@ export default function App() {
       return (
         <SettingsForm
           initialSpaceUrl={screen.settings?.spaceUrl ?? ""}
+          oauthAvailable={screen.settings?.oauthAvailable ?? false}
           onConnected={() => {
             setDocumentId(null);
             setTree(null);
             reload();
           }}
           onCancel={
-            screen.settings?.hasApiKey
+            screen.settings?.signedIn
               ? () => setScreen({ kind: "main", settings: screen.settings! })
               : undefined
           }

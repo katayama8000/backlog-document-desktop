@@ -32,6 +32,11 @@ export const api = {
   loadSettings: () => invoke<Settings>("load_settings"),
   connect: (spaceUrl: string, apiKey: string) =>
     tracked(invoke<User>("connect", { spaceUrl, apiKey })),
+  /** Opens Backlog in the browser and resolves once the user has allowed access. */
+  signInWithOAuth: (spaceUrl: string) =>
+    tracked(invoke<User>("sign_in_with_oauth", { spaceUrl })),
+  /** Stops waiting for the browser; `signInWithOAuth` then rejects as `cancelled`. */
+  cancelSignIn: () => invoke<void>("cancel_sign_in"),
   listProjects: () => tracked(invoke<Fetched<Project[]>>("list_projects")),
   selectProject: (projectKey: string) =>
     invoke<void>("select_project", { projectKey }),
@@ -59,7 +64,7 @@ export function errorMessage(e: unknown): string {
   if (!isCommandError(e)) return String(e);
   switch (e.kind) {
     case "unauthorized":
-      return "The API key was rejected.";
+      return "Backlog rejected the sign-in. Sign in again.";
     case "offline":
       return "Cannot reach the server, and nothing is cached.";
     case "notConfigured":

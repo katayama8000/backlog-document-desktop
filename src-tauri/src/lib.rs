@@ -2,6 +2,7 @@ mod assets;
 mod commands;
 mod error;
 mod navigation;
+mod oauth;
 mod secrets;
 mod state;
 mod store;
@@ -29,6 +30,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::connect,
+            commands::sign_in_with_oauth,
+            commands::cancel_sign_in,
             commands::list_projects,
             commands::select_project,
             commands::get_tree,

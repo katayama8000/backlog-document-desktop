@@ -1,9 +1,12 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
 use crate::error::ApiErrorBody;
+use crate::oauth::{self, OAuthApp, TokenSet};
 use crate::{ContentUpdate, Document, DocumentTree, Error, Project, SpaceUrl, User};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -18,28 +21,104 @@ pub struct FileContent {
     pub bytes: Vec<u8>,
 }
 
-/// Backlog API client authenticated with an API key.
+/// How requests are authenticated.
+#[derive(Clone)]
+pub enum Auth {
+    /// Sent as the `apiKey` query parameter.
+    ApiKey(String),
+    /// Sent as a Bearer token, refreshed before it expires.
+    OAuth(Arc<OAuthSession>),
+}
+
+/// OAuth tokens shared by every clone of a [`Client`], so only one request refreshes them.
+pub struct OAuthSession {
+    app: OAuthApp,
+    tokens: tokio::sync::Mutex<TokenSet>,
+    /// Called with the new tokens after each refresh, to store them. Runs after the
+    /// tokens are unlocked, so a slow store does not hold up other requests.
+    on_refresh: Box<dyn Fn(&TokenSet) + Send + Sync>,
+    /// Set when the app signs in again or switches credentials. A retired session
+    /// still serves requests already under way, but no longer stores its tokens.
+    retired: AtomicBool,
+}
+
+impl OAuthSession {
+    pub fn new(
+        app: OAuthApp,
+        tokens: TokenSet,
+        on_refresh: impl Fn(&TokenSet) + Send + Sync + 'static,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            app,
+            tokens: tokio::sync::Mutex::new(tokens),
+            on_refresh: Box::new(on_refresh),
+            retired: AtomicBool::new(false),
+        })
+    }
+
+    /// Stops storing refreshed tokens: other credentials have replaced this session.
+    pub fn retire(&self) {
+        self.retired.store(true, Ordering::SeqCst);
+    }
+
+    /// A usable access token. Refreshes it when it is about to expire, or when the server
+    /// rejected `rejected` and no other request has refreshed it since.
+    async fn access_token(
+        &self,
+        http: &reqwest::Client,
+        space_url: &SpaceUrl,
+        rejected: Option<&str>,
+    ) -> Result<String, Error> {
+        let mut tokens = self.tokens.lock().await;
+        let stale = match rejected {
+            Some(rejected) => tokens.access_token == rejected,
+            None => tokens.needs_refresh(oauth::now()),
+        };
+        if !stale {
+            return Ok(tokens.access_token.clone());
+        }
+        *tokens = oauth::refresh(http, space_url, &self.app, &tokens.refresh_token).await?;
+        let refreshed = tokens.clone();
+        drop(tokens);
+        if !self.retired.load(Ordering::SeqCst) {
+            (self.on_refresh)(&refreshed);
+        }
+        Ok(refreshed.access_token)
+    }
+}
+
+/// Backlog API client for one space.
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     space_url: SpaceUrl,
-    api_key: String,
+    auth: Auth,
+}
+
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(TIMEOUT)
+        .user_agent(concat!(
+            "backlog-document-desktop/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .build()
+        .expect("failed to build HTTP client")
 }
 
 impl Client {
-    pub fn new(space_url: SpaceUrl, api_key: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(TIMEOUT)
-            .user_agent(concat!(
-                "backlog-document-desktop/",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .build()
-            .expect("failed to build HTTP client");
+    pub fn new(space_url: SpaceUrl, auth: Auth) -> Self {
         Self {
-            http,
+            http: http_client(),
             space_url,
-            api_key: api_key.into(),
+            auth,
+        }
+    }
+
+    /// Retires the client's OAuth session, if it has one (see [`OAuthSession::retire`]).
+    pub fn retire(&self) {
+        if let Auth::OAuth(session) = &self.auth {
+            session.retire();
         }
     }
 
@@ -79,7 +158,9 @@ impl Client {
         document_id: &str,
         content: &str,
     ) -> Result<ContentUpdate, Error> {
-        let response = send(self.content_update_request(document_id, content)).await?;
+        let response = self
+            .send(self.content_update_request(document_id, content))
+            .await?;
         response.json().await.map_err(Error::Decode)
     }
 
@@ -97,7 +178,9 @@ impl Client {
         title: &str,
         parent_id: Option<&str>,
     ) -> Result<Document, Error> {
-        let response = send(self.create_document_request(project_id, title, parent_id)).await?;
+        let response = self
+            .send(self.create_document_request(project_id, title, parent_id))
+            .await?;
         response.json().await.map_err(Error::Decode)
     }
 
@@ -144,12 +227,16 @@ impl Client {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, Error> {
-        let response = send(self.request(Method::GET, path).query(query)).await?;
+        let response = self
+            .send(self.request(Method::GET, path).query(query))
+            .await?;
         response.json::<T>().await.map_err(Error::Decode)
     }
 
     async fn download(&self, path: &str) -> Result<FileContent, Error> {
-        let response = send(self.request(Method::GET, path).timeout(DOWNLOAD_TIMEOUT)).await?;
+        let response = self
+            .send(self.request(Method::GET, path).timeout(DOWNLOAD_TIMEOUT))
+            .await?;
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -163,15 +250,37 @@ impl Client {
         })
     }
 
+    /// The request without credentials; [`Client::send`] adds them.
     fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
         self.http
             .request(method, format!("{}{}", self.space_url, path))
-            .query(&[("apiKey", self.api_key.as_str())])
+    }
+
+    /// Adds the credentials and sends the request. With OAuth, a `401` refreshes the token
+    /// and sends the request once more.
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
+        let session = match &self.auth {
+            Auth::ApiKey(key) => return check(request.query(&[("apiKey", key)])).await,
+            Auth::OAuth(session) => session,
+        };
+        let retry = request.try_clone();
+        let token = session
+            .access_token(&self.http, &self.space_url, None)
+            .await?;
+        match (check(request.bearer_auth(&token)).await, retry) {
+            (Err(e), Some(retry)) if e.is_unauthorized() => {
+                let token = session
+                    .access_token(&self.http, &self.space_url, Some(&token))
+                    .await?;
+                check(retry.bearer_auth(token)).await
+            }
+            (result, _) => result,
+        }
     }
 }
 
 /// Sends the request and turns a non-success status into [`Error::Api`].
-async fn send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
+async fn check(request: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
     let response = request.send().await.map_err(Error::Network)?;
     let status = response.status();
     if status.is_success() {
@@ -198,6 +307,13 @@ impl Error {
 mod tests {
     use super::*;
 
+    fn client() -> Client {
+        Client::new(
+            SpaceUrl::parse("example.backlog.com").unwrap(),
+            Auth::ApiKey("test-key".to_string()),
+        )
+    }
+
     fn form_fields(request: &reqwest::Request) -> Vec<(String, String)> {
         let body = request.body().and_then(|b| b.as_bytes()).unwrap();
         url::form_urlencoded::parse(body).into_owned().collect()
@@ -212,7 +328,7 @@ mod tests {
 
     #[test]
     fn create_document_adds_a_child_at_the_end() {
-        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let client = client();
         let request = client
             .create_document_request(42, "Notes & ideas", Some("parent1"))
             .build()
@@ -232,7 +348,7 @@ mod tests {
 
     #[test]
     fn create_document_without_a_parent_goes_to_the_top_level() {
-        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let client = client();
         let request = client
             .create_document_request(42, "Top", None)
             .build()
@@ -245,7 +361,7 @@ mod tests {
 
     #[test]
     fn content_update_sends_the_body_as_a_form_field() {
-        let client = Client::new(SpaceUrl::parse("example.backlog.com").unwrap(), "test-key");
+        let client = client();
         let request = client
             .content_update_request("abc", "# T\n\na & b=c")
             .build()

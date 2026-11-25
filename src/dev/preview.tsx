@@ -4,6 +4,7 @@
 //   ?offline    Backlog unreachable; everything was cached before
 //   ?conflict   the next publish finds a change made on Backlog meanwhile
 //   ?doc=<id>   open that document (ids are in src/dev/fixtures.ts)
+//   ?noOAuth    a build without an OAuth application: API-key sign-in only
 // The backend is `window.mockBackend` in the console, e.g. `mockBackend.setOffline(true)`.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { sampleSpace } from "./fixtures.ts";
@@ -18,7 +19,7 @@ const ASSET_PLACEHOLDER = `data:image/svg+xml,${encodeURIComponent(
 )}`;
 
 const params = new URLSearchParams(location.search);
-const switches = ["empty", "offline", "conflict"].filter((s) => params.has(s));
+const switches = ["empty", "offline", "conflict", "noOAuth"].filter((s) => params.has(s));
 const docId = params.get("doc");
 
 const pages = (list: MockPage[]): MockPage[] => list.flatMap((p) => [p, ...pages(p.children ?? [])]);
@@ -26,9 +27,12 @@ const docProject = sampleSpace.projects.find((p) => pages(p.pages).some((page) =
 const docPage = docProject && pages(docProject.pages).find((page) => page.id === docId);
 
 const backend = createMockBackend(sampleSpace, {
-  settings: params.has("empty")
-    ? { spaceUrl: null, hasApiKey: false, projectKey: null }
-    : docProject && { projectKey: docProject.project.projectKey },
+  settings: {
+    ...(params.has("empty")
+      ? { spaceUrl: null, signedIn: false, projectKey: null }
+      : docProject && { projectKey: docProject.project.projectKey }),
+    oauthAvailable: !params.has("noOAuth"),
+  },
 });
 
 if (params.has("offline") && !params.has("empty")) {

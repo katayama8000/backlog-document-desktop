@@ -120,18 +120,35 @@ test("offline: reads come from the cache, uncached reads and publishing fail, ed
 });
 
 test("not connected: Backlog calls fail until connect succeeds", async () => {
-  const backend = createMockBackend(sampleSpace, { settings: { spaceUrl: null, hasApiKey: false, projectKey: null } });
+  const backend = createMockBackend(sampleSpace, { settings: { spaceUrl: null, signedIn: false, projectKey: null } });
   await rejectsWith(backend.invoke("list_projects", {}), "notConfigured");
   await rejectsWith(backend.invoke("connect", { spaceUrl: "https://example.com", apiKey: "k" }), "invalidInput");
   await rejectsWith(backend.invoke("connect", { spaceUrl: "demo.backlog.com", apiKey: " " }), "invalidInput");
 
   assert.equal((await backend.invoke("connect", { spaceUrl: "Demo.backlog.com/", apiKey: "k" })).name, sampleSpace.user.name);
   const settings = await backend.invoke("load_settings", {});
-  assert.deepEqual(settings, { spaceUrl: "https://demo.backlog.com", hasApiKey: true, projectKey: null });
+  assert.deepEqual(settings, {
+    spaceUrl: "https://demo.backlog.com",
+    signedIn: true,
+    projectKey: null,
+    oauthAvailable: true,
+  });
   assert.deepEqual(
     (await backend.invoke("list_projects", {})).data.map((p) => p.projectKey),
     ["DEMO", "NOTES"],
   );
+});
+
+test("OAuth sign-in connects like an API key, unless the build has no OAuth application", async () => {
+  const backend = createMockBackend(sampleSpace, { settings: { spaceUrl: null, signedIn: false, projectKey: null } });
+  await rejectsWith(backend.invoke("sign_in_with_oauth", { spaceUrl: "https://example.com" }), "invalidInput");
+  assert.equal((await backend.invoke("sign_in_with_oauth", { spaceUrl: "demo.backlog.com" })).name, sampleSpace.user.name);
+  assert.equal((await backend.invoke("load_settings", {})).signedIn, true);
+
+  const apiKeyOnly = createMockBackend(sampleSpace, {
+    settings: { spaceUrl: null, signedIn: false, projectKey: null, oauthAvailable: false },
+  });
+  await rejectsWith(apiKeyOnly.invoke("sign_in_with_oauth", { spaceUrl: "demo.backlog.com" }), "invalidInput");
 });
 
 test("the tree lists every page in order, untitled ones with an empty name", async () => {

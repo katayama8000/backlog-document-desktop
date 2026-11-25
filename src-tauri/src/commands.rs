@@ -2,14 +2,17 @@
 
 use std::future::Future;
 
-use backlog_api::{Client, DocumentTree, Project, SpaceUrl, User};
+use backlog_api::oauth::{self as backlog_oauth, Attempt, OAuthApp, TokenSet};
+use backlog_api::{Auth, Client, DocumentTree, OAuthSession, Project, SpaceUrl, User};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 use ts_rs::TS;
 
 use crate::error::{CommandError, ErrorKind};
-use crate::secrets;
+use crate::oauth::{self, Callback};
+use crate::secrets::{self, Credential};
 use crate::state::AppState;
 use crate::store::{ConflictCopy, PROJECT_KEY, SPACE_URL, Store, StoredDocument};
 use crate::sync::{self, PublishOutcome};
@@ -21,8 +24,11 @@ type CommandResult<T> = Result<T, CommandError>;
 #[ts(export)]
 pub struct Settings {
     pub space_url: Option<String>,
-    pub has_api_key: bool,
+    /// Credentials for the space are stored, so the app can connect without asking.
+    pub signed_in: bool,
     pub project_key: Option<String>,
+    /// This build can sign in with OAuth (it was built with an OAuth application).
+    pub oauth_available: bool,
 }
 
 /// Data that is either fresh from the API or read from the local cache.
@@ -117,21 +123,36 @@ pub fn load_settings(state: State<'_, AppState>) -> CommandResult<Settings> {
         .setting(SPACE_URL)?
         .or_else(|| secrets::dev_credentials().map(|(url, _)| url.as_str().to_owned()));
     let project_key = state.store.setting(PROJECT_KEY)?;
-    let mut has_api_key = false;
-    if let Some(url) = space_url.as_deref().map(SpaceUrl::parse).transpose()?
-        && let Some(key) = secrets::api_key(&url)?
-    {
-        state.set_client(Client::new(url, key));
-        has_api_key = true;
+    let oauth_app = oauth::app();
+    let mut signed_in = false;
+    if let Some(url) = space_url.as_deref().map(SpaceUrl::parse).transpose()? {
+        // Keep a client already signed in to this space: rebuilding it from the keychain
+        // would start a second OAuth session next to the one requests are using.
+        signed_in = state.client_for(&url).is_some();
+        if !signed_in {
+            let client = match secrets::credential(&url)? {
+                Some(Credential::ApiKey(key)) => Some(Client::new(url, Auth::ApiKey(key))),
+                // Tokens can only be refreshed by a build with the same OAuth application.
+                Some(Credential::OAuth(tokens)) => {
+                    oauth_app.clone().map(|app| oauth_client(url, app, tokens))
+                }
+                None => None,
+            };
+            if let Some(client) = client {
+                state.set_client(client);
+                signed_in = true;
+            }
+        }
     }
     Ok(Settings {
         space_url,
-        has_api_key,
+        signed_in,
         project_key,
+        oauth_available: oauth_app.is_some(),
     })
 }
 
-/// Verifies the connection with `GET /users/myself`, then saves the settings.
+/// Verifies the API key with `GET /users/myself`, then saves the settings.
 #[tauri::command]
 pub async fn connect(
     state: State<'_, AppState>,
@@ -146,16 +167,142 @@ pub async fn connect(
             "enter an API key",
         ));
     }
-    let client = Client::new(url.clone(), api_key);
+    let client = Client::new(url.clone(), Auth::ApiKey(api_key.to_owned()));
     let user = client.myself().await?;
+    save_sign_in(
+        &state,
+        &url,
+        &Credential::ApiKey(api_key.to_owned()),
+        client,
+    )?;
+    Ok(user)
+}
 
+/// Signs in with OAuth: opens Backlog's consent page in the browser, waits for the
+/// redirect to the loopback address, and trades the code for tokens.
+#[tauri::command]
+pub async fn sign_in_with_oauth(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    space_url: String,
+) -> CommandResult<User> {
+    let url = SpaceUrl::parse(&space_url)?;
+    let oauth_app = oauth::app().ok_or_else(|| {
+        CommandError::new(
+            ErrorKind::InvalidInput,
+            "this build cannot sign in with Backlog; use an API key",
+        )
+    })?;
+    let redirect = oauth::loopback(&oauth_app.redirect_uri)
+        .map_err(|message| CommandError::new(ErrorKind::Internal, message))?;
+
+    // Only one sign-in at a time: a new one replaces one still in progress.
+    let id = state.start_sign_in();
+    let listeners = oauth::bind(&redirect).await.map_err(|e| {
+        CommandError::new(
+            ErrorKind::Internal,
+            format!(
+                "cannot receive the sign-in on 127.0.0.1:{}: {e}",
+                redirect.port
+            ),
+        )
+    })?;
+    let attempt = Attempt::new();
+    let waiting = tokio::spawn(tokio::time::timeout(
+        oauth::SIGN_IN_TIMEOUT,
+        oauth::wait_for_code(listeners, redirect.path, attempt.state.clone()),
+    ));
+    state.wait_for_browser(id, waiting.abort_handle());
+
+    let authorize_url = backlog_oauth::authorize_url(&url, &oauth_app, &attempt);
+    if let Err(e) = app.opener().open_url(authorize_url, None::<&str>) {
+        waiting.abort();
+        return Err(CommandError::new(
+            ErrorKind::Internal,
+            format!("cannot open the browser: {e}"),
+        ));
+    }
+
+    let code = match waiting.await {
+        Ok(Ok(Ok(Callback::Code(code)))) => code,
+        Ok(Ok(Ok(Callback::Denied(reason)))) => {
+            return Err(CommandError::new(
+                ErrorKind::Unauthorized,
+                format!("Backlog did not give access ({reason})"),
+            ));
+        }
+        Ok(Ok(Err(e))) => {
+            return Err(CommandError::new(
+                ErrorKind::Internal,
+                format!("sign-in failed: {e}"),
+            ));
+        }
+        Ok(Err(_elapsed)) => {
+            return Err(CommandError::new(
+                ErrorKind::Cancelled,
+                "sign-in timed out; try again",
+            ));
+        }
+        Err(e) if e.is_cancelled() => return Err(cancelled()),
+        Err(e) => {
+            return Err(CommandError::new(
+                ErrorKind::Internal,
+                format!("sign-in stopped unexpectedly: {e}"),
+            ));
+        }
+    };
+
+    let tokens = backlog_oauth::exchange_code(&url, &oauth_app, &code, &attempt).await?;
+    let client = oauth_client(url.clone(), oauth_app, tokens.clone());
+    let user = client.myself().await?;
+    if !state.finish_sign_in(id) {
+        client.retire();
+        return Err(cancelled());
+    }
+    save_sign_in(&state, &url, &Credential::OAuth(tokens), client)?;
+    Ok(user)
+}
+
+fn cancelled() -> CommandError {
+    CommandError::new(ErrorKind::Cancelled, "sign-in cancelled")
+}
+
+/// Cancels the OAuth sign-in in progress; `sign_in_with_oauth` then fails as cancelled.
+#[tauri::command]
+pub fn cancel_sign_in(state: State<'_, AppState>) {
+    state.cancel_sign_in();
+}
+
+/// A client that stores refreshed tokens in the keychain.
+fn oauth_client(url: SpaceUrl, app: OAuthApp, tokens: TokenSet) -> Client {
+    let space = url.clone();
+    let session = OAuthSession::new(app, tokens, move |tokens| {
+        let (space, credential) = (space.clone(), Credential::OAuth(tokens.clone()));
+        // The keychain blocks, and may show a password prompt.
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = secrets::set_credential(&space, &credential) {
+                // The tokens still work until the app quits; the next launch asks to sign in.
+                eprintln!("could not store refreshed OAuth tokens: {e}");
+            }
+        });
+    });
+    Client::new(url, Auth::OAuth(session))
+}
+
+/// Saves a verified sign-in. Switching to another space clears the cache.
+fn save_sign_in(
+    state: &AppState,
+    url: &SpaceUrl,
+    credential: &Credential,
+    client: Client,
+) -> CommandResult<()> {
     if state.store.setting(SPACE_URL)?.as_deref() != Some(url.as_str()) {
         state.store.clear_space_data()?;
     }
-    secrets::set_api_key(&url, api_key)?;
+    secrets::set_credential(url, credential)?;
     state.store.set_setting(SPACE_URL, url.as_str())?;
     state.set_client(client);
-    Ok(user)
+    Ok(())
 }
 
 #[tauri::command]
