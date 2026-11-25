@@ -22,6 +22,8 @@ pub enum ErrorKind {
     Unauthorized,
     /// The server could not be reached and nothing is cached.
     Offline,
+    /// The user's per-minute API rate limit was reached. Wait before calling again.
+    RateLimited,
     /// Any other error response from the Backlog API.
     Api,
     /// The user stopped the operation (e.g. closed sign-in).
@@ -56,6 +58,7 @@ impl From<backlog_api::Error> for CommandError {
             backlog_api::Error::InvalidSpaceUrl(_) => ErrorKind::InvalidInput,
             e if e.is_offline() => ErrorKind::Offline,
             e if e.is_unauthorized() => ErrorKind::Unauthorized,
+            e if e.is_rate_limited() => ErrorKind::RateLimited,
             _ => ErrorKind::Api,
         };
         Self::new(kind, e.to_string())

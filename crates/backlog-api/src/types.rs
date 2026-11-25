@@ -62,6 +62,18 @@ pub struct Document {
     pub updated: String,
 }
 
+/// An item of `GET /api/v2/documents`: only what is needed to tell whether a document changed.
+/// The response also carries each document's body, which is ignored.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentSummary {
+    pub id: String,
+    pub title: String,
+    /// ISO 8601
+    pub updated: String,
+}
+
 /// Response of `PATCH /api/v2/documents/:id/content`. It has no body: fetch the document again.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +87,26 @@ pub struct ContentUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_document_summaries_ignoring_the_body() {
+        let json = r#"[{
+            "id": "0123456789abcdef0123456789abcdef",
+            "projectId": 1,
+            "title": "top",
+            "plain": "A big body",
+            "json": "{}",
+            "statusId": 1,
+            "emoji": null,
+            "attachments": [],
+            "tags": [],
+            "created": "2025-04-28T01:47:02Z",
+            "updated": "2026-11-20T03:00:00Z"
+        }]"#;
+        let docs: Vec<DocumentSummary> = serde_json::from_str(json).unwrap();
+        assert_eq!(docs[0].title, "top");
+        assert_eq!(docs[0].updated, "2026-11-20T03:00:00Z");
+    }
 
     #[test]
     fn decodes_document_tree() {

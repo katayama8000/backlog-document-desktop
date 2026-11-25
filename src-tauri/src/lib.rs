@@ -39,8 +39,12 @@ pub fn run() {
             commands::save_local,
             commands::discard_local,
             commands::create_document,
+            commands::recent_documents,
             commands::publish_document,
-            commands::resolve_conflict,
+            commands::pull_document,
+            commands::apply_merge,
+            commands::list_versions,
+            commands::restore_version,
         ])
         .run(context)
         .expect("error while running tauri application");

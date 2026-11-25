@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { useConnection } from "../connection";
+import { usePollResults } from "../polling";
 import { Icon } from "./Icon";
 import type { DocumentTree } from "../bindings/DocumentTree";
 import type { Fetched } from "../bindings/Fetched";
@@ -52,6 +53,12 @@ export function Sidebar({ settings, tree, onTreeChange, selectedId, onSelect, on
     setProjectKey(key);
     api.selectProject(key).catch((e) => setError(errorMessage(e)));
   };
+
+  // Something changed on Backlog: refresh the tree quietly, keeping the current one on failure.
+  usePollResults(({ changed }) => {
+    if (changed.length === 0 || !projectKey || loadingTree) return;
+    api.getTree(projectKey).then(onTreeChange, () => {});
+  });
 
   const canCreate = tree !== null && !tree.fromCache && online;
   const startNew = (parentId: string | null) => {
