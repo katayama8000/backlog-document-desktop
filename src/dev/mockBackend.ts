@@ -36,6 +36,8 @@ export type MockSpace = {
 export type MockCommands = {
   load_settings: { args: Record<string, never>; result: Settings };
   connect: { args: { spaceUrl: string; apiKey: string }; result: User };
+  sign_in_with_oauth: { args: { spaceUrl: string }; result: User };
+  cancel_sign_in: { args: Record<string, never>; result: null };
   list_projects: { args: Record<string, never>; result: Fetched<Project[]> };
   select_project: { args: { projectKey: string }; result: null };
   get_tree: { args: { projectKey: string }; result: Fetched<DocumentTree> };
@@ -112,8 +114,9 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
 
   let settings: Settings = {
     spaceUrl: space.spaceUrl,
-    hasApiKey: true,
+    signedIn: true,
     projectKey: space.projects[0]?.project.projectKey ?? null,
+    oauthAvailable: true,
     ...options.settings,
   };
   let offline = false;
@@ -139,9 +142,9 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
     return { ...doc };
   }
 
-  /** The API client exists once a space URL and an API key are set. */
+  /** The API client exists once a space URL and credentials are set. */
   function requireClient(): void {
-    if (settings.spaceUrl === null || !settings.hasApiKey) throw fail("notConfigured", "connection settings are missing");
+    if (settings.spaceUrl === null || !settings.signedIn) throw fail("notConfigured", "connection settings are missing");
   }
 
   /** A Backlog API call: fails as unreachable while offline. */
@@ -257,20 +260,32 @@ export function createMockBackend(space: MockSpace, options: { settings?: Partia
     return outcome;
   }
 
+  /** `save_sign_in`: switching to another space clears the cache. */
+  function signIn(url: string): User {
+    if (offline) throw fail("offline", "cannot reach the server");
+    if (settings.spaceUrl !== url) {
+      cache.clear();
+      stored.clear();
+      copies.length = 0;
+    }
+    settings = { ...settings, spaceUrl: url, signedIn: true };
+    return space.user;
+  }
+
   const commands: { [C in MockCommand]: (args: MockCommands[C]["args"]) => MockCommands[C]["result"] } = {
     load_settings: () => settings,
     connect: ({ spaceUrl, apiKey }) => {
       const url = parseSpaceUrl(spaceUrl);
       if (!apiKey.trim()) throw fail("invalidInput", "enter an API key");
-      if (offline) throw fail("offline", "cannot reach the server");
-      if (settings.spaceUrl !== url) {
-        cache.clear();
-        stored.clear();
-        copies.length = 0;
-      }
-      settings = { ...settings, spaceUrl: url, hasApiKey: true };
-      return space.user;
+      return signIn(url);
     },
+    // The browser step is skipped: the user allows access at once.
+    sign_in_with_oauth: ({ spaceUrl }) => {
+      const url = parseSpaceUrl(spaceUrl);
+      if (!settings.oauthAvailable) throw fail("invalidInput", "this build cannot sign in with Backlog; use an API key");
+      return signIn(url);
+    },
+    cancel_sign_in: () => null,
     list_projects: () => fetchOrCache("projects", () => space.projects.map((p) => p.project)),
     select_project: ({ projectKey }) => {
       settings = { ...settings, projectKey };

@@ -262,10 +262,14 @@ dependencies = [
 name = "backlog-api"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
+ "getrandom 0.3.4",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
+ "tokio",
  "ts-rs",
  "url",
 ]
@@ -284,6 +288,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "thiserror 2.0.21",
+ "tokio",
  "ts-rs",
 ]
 

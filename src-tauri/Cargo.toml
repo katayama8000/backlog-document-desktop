@@ -23,4 +23,5 @@ serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 thiserror.workspace = true
+tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
 ts-rs.workspace = true
