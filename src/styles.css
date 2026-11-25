@@ -144,8 +144,21 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 .settings label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 13px; }
 .settings label input { font-weight: 400; }
 .settings p { margin: 0; }
-.settings .row { justify-content: flex-end; }
-.settings .settings-switch { margin-right: auto; }
+.settings-header { display: flex; align-items: baseline; justify-content: space-between; }
+.settings-header button.link { color: var(--muted); }
+.settings-header button.link:hover { color: var(--fg); }
+.settings-actions { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+button.wide { width: 100%; height: 40px; font-size: 14px; }
+.settings-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-divider::before,
+.settings-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.settings .settings-switch { align-self: center; }
 
 /* Layout */
 .layout { display: flex; height: 100vh; }

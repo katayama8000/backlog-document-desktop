@@ -1,5 +1,6 @@
 import { type FormEvent, useRef, useState } from "react";
 import { api, errorMessage, isCommandError } from "../api";
+import { Icon } from "./Icon";
 
 type Props = {
   initialSpaceUrl: string;
@@ -46,10 +47,26 @@ export function SettingsForm({ initialSpaceUrl, oauthAvailable, onConnected, onC
 
   const waitingForBrowser = busy && method === "oauth";
 
+  const primaryLabel =
+    method === "oauth"
+      ? waitingForBrowser
+        ? "Waiting for the browser…"
+        : "Sign in with Backlog"
+      : busy
+        ? "Connecting…"
+        : "Connect";
+
   return (
     <div className="center">
       <form className="settings" onSubmit={submit}>
-        <h1>Connection</h1>
+        <div className="settings-header">
+          <h1>Connection</h1>
+          {onCancel && !busy && (
+            <button type="button" className="link" onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+        </div>
         <label>
           Space URL
           <input
@@ -74,28 +91,24 @@ export function SettingsForm({ initialSpaceUrl, oauthAvailable, onConnected, onC
             />
           </label>
         )}
-        <p className="muted small">
-          {waitingForBrowser
-            ? "Allow access in the browser window that opened, then come back here."
-            : method === "oauth"
-              ? "Opens Backlog in your browser to allow access. The sign-in is stored in the macOS Keychain."
-              : "The API key is stored in the macOS Keychain."}{" "}
-          Changing the space clears the local cache.
-        </p>
         {error && <p className="error">{error}</p>}
-        <div className="row">
-          {oauthAvailable && !busy && (
+        <div className="settings-actions">
+          <button type="submit" className="primary wide" disabled={busy}>
+            {busy && <Icon name="reload" className="spin" />}
+            {primaryLabel}
+          </button>
+          <p className="muted small">
+            {waitingForBrowser
+              ? "Allow access in the browser window that opened, then come back here."
+              : method === "oauth"
+                ? "Opens Backlog in your browser. The sign-in is kept in the macOS Keychain."
+                : "The API key is kept in the macOS Keychain."}{" "}
+            {!waitingForBrowser && "Changing the space clears the local cache."}
+          </p>
+          {waitingForBrowser && (
             <button
               type="button"
-              className="link settings-switch"
-              onClick={() => switchTo(method === "oauth" ? "apiKey" : "oauth")}
-            >
-              {method === "oauth" ? "Use an API key instead" : "Sign in with Backlog instead"}
-            </button>
-          )}
-          {waitingForBrowser ? (
-            <button
-              type="button"
+              className="link"
               onClick={() => {
                 stopped.current = true;
                 void api.cancelSignIn();
@@ -103,23 +116,22 @@ export function SettingsForm({ initialSpaceUrl, oauthAvailable, onConnected, onC
             >
               Stop waiting
             </button>
-          ) : (
-            onCancel && (
-              <button type="button" onClick={onCancel} disabled={busy}>
-                Cancel
-              </button>
-            )
           )}
-          <button type="submit" className="primary" disabled={busy}>
-            {method === "oauth"
-              ? waitingForBrowser
-                ? "Waiting for the browser…"
-                : "Sign in with Backlog"
-              : busy
-                ? "Connecting…"
-                : "Connect"}
-          </button>
         </div>
+        {oauthAvailable && !busy && (
+          <>
+            <div className="settings-divider" role="separator">
+              or
+            </div>
+            <button
+              type="button"
+              className="link settings-switch"
+              onClick={() => switchTo(method === "oauth" ? "apiKey" : "oauth")}
+            >
+              {method === "oauth" ? "Use an API key instead" : "Sign in with Backlog instead"}
+            </button>
+          </>
+        )}
       </form>
     </div>
   );
