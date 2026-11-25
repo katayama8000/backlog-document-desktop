@@ -7,8 +7,6 @@ on:
     types: [published]
   push:
     branches: [main]
-  pull_request:
-    paths: [".github/workflows/build-macos.yml"]
   workflow_dispatch:
 
 permissions:
@@ -64,7 +62,7 @@ jobs:
 
       # Universal app (Apple Silicon + Intel), ad-hoc signed (see tauri.conf.json).
       # The OAuth application is compiled in (src-tauri/build.rs). Without the
-      # secrets, e.g. on pull requests from forks, the app offers API keys only.
+      # secrets, the app offers API keys only.
       - uses: tauri-apps/tauri-action@v0
         env:
           BACKLOG_OAUTH_CLIENT_ID: ${{ secrets.BACKLOG_OAUTH_CLIENT_ID }}
