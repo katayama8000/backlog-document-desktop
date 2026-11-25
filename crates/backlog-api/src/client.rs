@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -69,15 +70,32 @@ impl OAuthSession {
         space_url: &SpaceUrl,
         rejected: Option<&str>,
     ) -> Result<String, Error> {
+        self.fresh_token(rejected, oauth::now(), |refresh_token| async move {
+            oauth::refresh(http, space_url, &self.app, &refresh_token).await
+        })
+        .await
+    }
+
+    /// [`Self::access_token`] with the clock and the token request passed in.
+    async fn fresh_token<F, R>(
+        &self,
+        rejected: Option<&str>,
+        now: u64,
+        refresh: R,
+    ) -> Result<String, Error>
+    where
+        R: FnOnce(String) -> F,
+        F: Future<Output = Result<TokenSet, Error>>,
+    {
         let mut tokens = self.tokens.lock().await;
         let stale = match rejected {
             Some(rejected) => tokens.access_token == rejected,
-            None => tokens.needs_refresh(oauth::now()),
+            None => tokens.needs_refresh(now),
         };
         if !stale {
             return Ok(tokens.access_token.clone());
         }
-        *tokens = oauth::refresh(http, space_url, &self.app, &tokens.refresh_token).await?;
+        *tokens = refresh(tokens.refresh_token.clone()).await?;
         let refreshed = tokens.clone();
         drop(tokens);
         if !self.retired.load(Ordering::SeqCst) {
@@ -300,6 +318,154 @@ impl Error {
     /// True for authentication failures (wrong or revoked API key).
     pub fn is_unauthorized(&self) -> bool {
         self.status() == Some(StatusCode::UNAUTHORIZED.as_u16())
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+
+    const NOW: u64 = 1_000_000;
+
+    fn tokens(access: &str, expires_at: u64) -> TokenSet {
+        TokenSet {
+            access_token: access.to_owned(),
+            refresh_token: format!("refresh-for-{access}"),
+            expires_at,
+        }
+    }
+
+    /// A session whose stored tokens are recorded in `stored`.
+    fn session(initial: TokenSet) -> (Arc<OAuthSession>, Arc<Mutex<Vec<String>>>) {
+        let stored = Arc::new(Mutex::new(Vec::new()));
+        let record = stored.clone();
+        let app = OAuthApp {
+            client_id: "id".to_owned(),
+            client_secret: "secret".to_owned(),
+            redirect_uri: "http://127.0.0.1:53682/callback".to_owned(),
+        };
+        let session = OAuthSession::new(app, initial, move |t| {
+            record.lock().unwrap().push(t.access_token.clone());
+        });
+        (session, stored)
+    }
+
+    /// A token request that returns `access` and counts its calls.
+    fn backlog_returns(
+        access: &'static str,
+        calls: &Arc<AtomicUsize>,
+    ) -> impl FnOnce(String) -> std::future::Ready<Result<TokenSet, Error>> {
+        let calls = calls.clone();
+        move |refresh_token| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert!(refresh_token.starts_with("refresh-for-"));
+            std::future::ready(Ok(tokens(access, NOW + 3600)))
+        }
+    }
+
+    fn run<T>(future: impl Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn uses_a_fresh_token_without_asking_backlog() {
+        let (session, stored) = session(tokens("a1", NOW + 3600));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let token = run(session.fresh_token(None, NOW, backlog_returns("a2", &calls)));
+        assert_eq!(token.unwrap(), "a1");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(stored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn refreshes_before_expiry_and_stores_the_new_tokens() {
+        let (session, stored) = session(tokens("a1", NOW + 30));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let token = run(session.fresh_token(None, NOW, backlog_returns("a2", &calls)));
+        assert_eq!(token.unwrap(), "a2");
+        assert_eq!(*stored.lock().unwrap(), ["a2"]);
+
+        // The new token is good for an hour: no second refresh.
+        let token = run(session.fresh_token(None, NOW, backlog_returns("a3", &calls)));
+        assert_eq!(token.unwrap(), "a2");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_rejected_token_is_refreshed_once() {
+        let (session, _) = session(tokens("a1", NOW + 3600));
+        let calls = Arc::new(AtomicUsize::new(0));
+        // Two requests sent with a1 both got 401. The first refreshes; the second
+        // finds a1 already replaced and uses a2.
+        let first = run(session.fresh_token(Some("a1"), NOW, backlog_returns("a2", &calls)));
+        let second = run(session.fresh_token(Some("a1"), NOW, backlog_returns("a3", &calls)));
+        assert_eq!(first.unwrap(), "a2");
+        assert_eq!(second.unwrap(), "a2");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn concurrent_requests_share_one_refresh() {
+        let (session, stored) = session(tokens("a1", NOW));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tokens_seen = run(async {
+            let mut tasks = Vec::new();
+            for _ in 0..5 {
+                let (session, calls) = (session.clone(), calls.clone());
+                tasks.push(tokio::spawn(async move {
+                    session
+                        .fresh_token(None, NOW, |_| async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            // Let the other requests reach the lock meanwhile.
+                            tokio::task::yield_now().await;
+                            Ok(tokens("a2", NOW + 3600))
+                        })
+                        .await
+                        .unwrap()
+                }));
+            }
+            let mut seen = Vec::new();
+            for task in tasks {
+                seen.push(task.await.unwrap());
+            }
+            seen
+        });
+        assert_eq!(tokens_seen, ["a2"; 5]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*stored.lock().unwrap(), ["a2"]);
+    }
+
+    #[test]
+    fn a_retired_session_keeps_working_but_stores_nothing() {
+        let (session, stored) = session(tokens("a1", NOW));
+        session.retire();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let token = run(session.fresh_token(None, NOW, backlog_returns("a2", &calls)));
+        assert_eq!(token.unwrap(), "a2");
+        assert!(stored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failed_refresh_keeps_the_old_tokens() {
+        let (session, stored) = session(tokens("a1", NOW));
+        let failed = run(session.fresh_token(None, NOW, |_| async {
+            Err(Error::Api {
+                status: 401,
+                errors: Vec::new(),
+            })
+        }));
+        assert!(failed.unwrap_err().is_unauthorized());
+        assert!(stored.lock().unwrap().is_empty());
+        // The next request tries again with the same refresh token.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let token = run(session.fresh_token(None, NOW, backlog_returns("a2", &calls)));
+        assert_eq!(token.unwrap(), "a2");
     }
 }
 
