@@ -19,7 +19,6 @@ Planned:
 
 - WYSIWYG editing, published to Backlog when you click **Publish to Backlog**
 - Conflict-aware sync: the latest remote version is fetched and merged before publishing (conflict copies first, then three-way merge)
-- OAuth 2.0 sign-in (API key for now)
 
 ## Install (macOS)
 
@@ -55,7 +54,9 @@ Or remove the flag in the terminal: `xattr -dr com.apple.quarantine "/Applicatio
 
 ### First launch
 
-Enter your space URL (e.g. `https://your-space.backlog.com`) and an API key from Backlog (Personal settings → API). The key is stored in the macOS Keychain; macOS may ask for your password the first time the app reads it.
+Enter your space URL (e.g. `https://your-space.backlog.com`) and click **Sign in with Backlog**. Backlog opens in your browser; allow access there and return to the app. The sign-in is stored in the macOS Keychain and renewed automatically; macOS may ask for your password the first time the app reads it.
+
+You can also click **Use an API key instead** and enter an API key from Backlog (Personal settings → API). Builds made without an OAuth application (see [OAuth application](#oauth-application)) offer the API key only.
 
 ## Tech stack
 
@@ -87,6 +88,23 @@ Debug builds (`pnpm tauri dev`) read these and never touch the macOS Keychain, s
 
 Without `.env`, enter the space URL and API key in the app on first launch; the key is then stored in the macOS Keychain. Release builds always use the Keychain and ignore `.env`.
 
+### OAuth application
+
+To offer **Sign in with Backlog**, register an application in Backlog's developer settings and give its settings to the build, in the environment or in `.env`:
+
+```sh
+BACKLOG_OAUTH_CLIENT_ID=your-client-id
+BACKLOG_OAUTH_CLIENT_SECRET=your-client-secret
+# Optional. Must match the redirect URI registered for the application.
+BACKLOG_OAUTH_REDIRECT_URI=http://127.0.0.1:53682/callback
+```
+
+They are compiled into the app (`src-tauri/build.rs`). The redirect URI must be `http://127.0.0.1:<port>/<path>` (or `localhost`): while you sign in, the app listens there for the browser to come back. Without the client ID and secret, the app offers API-key sign-in only. A desktop app cannot keep the client secret from someone who inspects the binary.
+
+The release workflow takes them from the repository secrets `BACKLOG_OAUTH_CLIENT_ID`, `BACKLOG_OAUTH_CLIENT_SECRET` and the variable `BACKLOG_OAUTH_REDIRECT_URI`.
+
+To try OAuth in a debug build, leave `BACKLOG_API_KEY` out of `.env`: a debug build uses the `.env` API key for its space whenever one is set.
+
 ### 2. Run
 
 ```sh
@@ -113,7 +131,7 @@ pnpm preview:mock
 
 opens the real UI in your browser at http://localhost:1430/preview.html, backed by an in-memory fake of the Tauri commands and a sample space (`src/dev/`). It needs no Backlog account, API key or Keychain, and nothing reaches Backlog. A "Mock preview" badge marks the page. Reloading starts over.
 
-URL switches, combinable: `?empty` (first-run settings screen), `?offline` (Backlog unreachable, everything cached), `?conflict` (the next publish finds a change made on Backlog), `?doc=<id>` (open a document, e.g. `?doc=forms` for the page with every Backlog form). In the console, `mockBackend` drives more scenarios, e.g. `mockBackend.remoteChanges("editing", "new text")`.
+URL switches, combinable: `?empty` (first-run settings screen), `?offline` (Backlog unreachable, everything cached), `?conflict` (the next publish finds a change made on Backlog), `?noOAuth` (a build without OAuth: API-key sign-in only), `?doc=<id>` (open a document, e.g. `?doc=forms` for the page with every Backlog form). In the console, `mockBackend` drives more scenarios, e.g. `mockBackend.remoteChanges("editing", "new text")`.
 
 ## Repository layout
 

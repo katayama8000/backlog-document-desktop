@@ -63,7 +63,13 @@ jobs:
           grep -n '^version' Cargo.toml
 
       # Universal app (Apple Silicon + Intel), ad-hoc signed (see tauri.conf.json).
+      # The OAuth application is compiled in (src-tauri/build.rs). Without the
+      # secrets, e.g. on pull requests from forks, the app offers API keys only.
       - uses: tauri-apps/tauri-action@v0
+        env:
+          BACKLOG_OAUTH_CLIENT_ID: ${{ secrets.BACKLOG_OAUTH_CLIENT_ID }}
+          BACKLOG_OAUTH_CLIENT_SECRET: ${{ secrets.BACKLOG_OAUTH_CLIENT_SECRET }}
+          BACKLOG_OAUTH_REDIRECT_URI: ${{ vars.BACKLOG_OAUTH_REDIRECT_URI }}
         with:
           args: --target universal-apple-darwin
 
