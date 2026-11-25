@@ -106,3 +106,80 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> AppState {
+        AppState::new(Store::open_in_memory().unwrap())
+    }
+
+    /// Runs `check` with a task that waits forever, as the browser wait does. True when
+    /// `check` stopped the task.
+    fn with_waiting_task(check: impl FnOnce(AbortHandle)) -> bool {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let waiting = tokio::spawn(std::future::pending::<()>());
+                check(waiting.abort_handle());
+                waiting.await.is_err_and(|e| e.is_cancelled())
+            })
+    }
+
+    #[test]
+    fn a_sign_in_that_runs_to_the_end_is_saved() {
+        let state = state();
+        let id = state.start_sign_in();
+        assert!(state.finish_sign_in(id));
+        // Finishing twice does not count.
+        assert!(!state.finish_sign_in(id));
+    }
+
+    #[test]
+    fn cancelling_stops_the_browser_wait_and_nothing_is_saved() {
+        let state = state();
+        let stopped = with_waiting_task(|waiting| {
+            let id = state.start_sign_in();
+            state.wait_for_browser(id, waiting);
+            state.cancel_sign_in();
+            assert!(!state.finish_sign_in(id));
+        });
+        assert!(stopped);
+    }
+
+    #[test]
+    fn cancelling_before_the_wait_starts_stops_it_at_once() {
+        // "Stop waiting" pressed while the app was still binding the port.
+        let state = state();
+        let stopped = with_waiting_task(|waiting| {
+            let id = state.start_sign_in();
+            state.cancel_sign_in();
+            state.wait_for_browser(id, waiting);
+        });
+        assert!(stopped);
+    }
+
+    #[test]
+    fn cancelling_after_the_browser_returned_still_saves_nothing() {
+        // The code arrived and the token exchange is under way when the user cancels.
+        let state = state();
+        let id = state.start_sign_in();
+        state.cancel_sign_in();
+        assert!(!state.finish_sign_in(id));
+    }
+
+    #[test]
+    fn a_new_sign_in_replaces_the_one_in_progress() {
+        let state = state();
+        let stopped = with_waiting_task(|waiting| {
+            let first = state.start_sign_in();
+            state.wait_for_browser(first, waiting);
+            let second = state.start_sign_in();
+            assert!(!state.finish_sign_in(first));
+            assert!(state.finish_sign_in(second));
+        });
+        assert!(stopped, "the first sign-in's browser wait must stop");
+    }
+}
